@@ -7,6 +7,7 @@ import { card } from '@/lib/ui'
 import PaymentFlowTracker from '@/components/PaymentFlowTracker'
 import HaulerJobActions from '@/components/HaulerJobActions'
 import ReviewForm from '@/components/ReviewForm'
+import ChatPanel from '@/components/ChatPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +23,12 @@ export default async function HaulerJobDetail({ params }: { params: Promise<{ id
   if (!job) notFound()
 
   const alreadyReviewed = await db.review.findUnique({ where: { jobId_raterId: { jobId: id, raterId: dbUser.id } } })
+
+  const initialMessages = await db.message.findMany({
+    where: { jobId: id },
+    orderBy: { createdAt: 'asc' },
+    include: { sender: { select: { id: true, name: true, email: true, role: true, haulerProfile: { select: { companyName: true } } } } },
+  })
 
   return (
     <div className="space-y-6">
@@ -65,6 +72,14 @@ export default async function HaulerJobDetail({ params }: { params: Promise<{ id
           <img src={job.afterPhotoUrl} alt="After" className="h-48 w-full rounded-lg object-cover" />
         </div>
       )}
+
+      {/* ── Messenger ── */}
+      <ChatPanel
+        jobId={job.id}
+        viewerRole="HAULER"
+        jobStatus={job.status}
+        initialMessages={initialMessages as Parameters<typeof ChatPanel>[0]['initialMessages']}
+      />
 
       {job.status === 'PENDING_PAYOUT' && job.disputeWindowEnd && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">

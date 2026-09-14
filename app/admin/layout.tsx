@@ -28,6 +28,8 @@ export default async function AdminLayout({
           <div className="flex items-center gap-5">
             <Link href="/admin/ops" className="text-sm text-slate-400 transition hover:text-white">Ops</Link>
             <Link href="/admin/jobs" className="text-sm text-slate-400 transition hover:text-white">All Loads</Link>
+            <Link href="/admin/messages" className="text-sm text-slate-400 transition hover:text-white">Messages</Link>
+            <Link href="/admin/users" className="text-sm text-slate-400 transition hover:text-white">Users</Link>
             <Link href="/admin/verification" className="text-sm text-slate-400 transition hover:text-white">Verification</Link>
             <Link href="/admin/finance" className="text-sm text-slate-400 transition hover:text-white">Finance</Link>
             <NotificationBell />

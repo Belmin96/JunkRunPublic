@@ -9,6 +9,7 @@ import StatusBadge from '@/components/StatusBadge'
 import EstimateList from '@/components/EstimateList'
 import DisputeForm from '@/components/DisputeForm'
 import ReviewForm from '@/components/ReviewForm'
+import ChatPanel from '@/components/ChatPanel'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,6 +29,13 @@ export default async function CustomerJobDetail({ params }: { params: Promise<{ 
 
   const alreadyReviewed = await db.review.findUnique({ where: { jobId_raterId: { jobId: id, raterId: dbUser.id } } })
   const jobTypes = parseJobTypes(job.jobTypes)
+
+  // Load initial messages (SSR for instant paint; ChatPanel polls for updates)
+  const initialMessages = await db.message.findMany({
+    where: { jobId: id },
+    orderBy: { createdAt: 'asc' },
+    include: { sender: { select: { id: true, name: true, email: true, role: true, haulerProfile: { select: { companyName: true } } } } },
+  })
 
   return (
     <div className="space-y-6">
@@ -92,6 +100,16 @@ export default async function CustomerJobDetail({ params }: { params: Promise<{ 
           <p className="mt-1 font-semibold text-ink">{job.hauler.companyName}</p>
           <p className="text-xs text-slate-500">⭐ {job.hauler.rating.toFixed(1)} · {job.hauler.jobCount} jobs completed</p>
         </div>
+      )}
+
+      {/* ── Messenger — visible once a hauler is assigned ── */}
+      {job.hauler && (
+        <ChatPanel
+          jobId={job.id}
+          viewerRole="CUSTOMER"
+          jobStatus={job.status}
+          initialMessages={initialMessages as Parameters<typeof ChatPanel>[0]['initialMessages']}
+        />
       )}
 
       {job.status === 'PENDING_PAYOUT' && job.disputeWindowEnd && (

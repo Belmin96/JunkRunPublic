@@ -43,6 +43,7 @@ model User {
   pushSubscriptions PushSubscription[]
   reviewsGiven      Review[]           @relation("ReviewsGiven")
   reviewsReceived   Review[]           @relation("CustomerReviews")
+  messagesSent      Message[]          @relation("MessagesSent")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,6 +169,7 @@ model Job {
   estimates Estimate[]
   declines  JobDecline[]
   reviews   Review[]
+  messages  Message[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -265,6 +267,22 @@ model Notification {
 // Lets us report hauler payouts AND platform profit (10% fee) as two
 // separate, auditable numbers, week over week.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Messages — real-time chat between customer and hauler per job.
+// senderRole: "CUSTOMER" | "HAULER" | "ADMIN"
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Message {
+  id         String   @id @default(cuid())
+  jobId      String
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  senderId   String
+  sender     User     @relation("MessagesSent", fields: [senderId], references: [id])
+  senderRole String   // "CUSTOMER" | "HAULER" | "ADMIN"
+  text       String
+  createdAt  DateTime @default(now())
+}
 
 model WeeklyPayout {
   id               String        @id @default(cuid())

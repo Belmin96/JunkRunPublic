@@ -54,7 +54,10 @@ export async function POST(req: NextRequest) {
   const name = [data.first_name, data.last_name].filter(Boolean).join(' ') || null
 
   if (type === 'user.created') {
-    // Determine role from sign-up unsafeMetadata
+    // Determine role from sign-up unsafeMetadata.
+    // Works for both email/password and Google OAuth sign-ups because
+    // the SignUp component's unsafeMetadata prop is persisted by Clerk
+    // regardless of sign-up method.
     const unsafeRole = data.unsafe_metadata?.role?.toLowerCase()
     const dbRole = unsafeRole === 'hauler' ? 'HAULER' : 'CUSTOMER'
 
