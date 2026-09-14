@@ -1,0 +1,931 @@
+<title>JunkRun</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&family=JetBrains+Mono:wght@500&display=swap">
+
+<style>
+:root {
+  --bg:#EEF3E8; --surface:#FFF; --s2:#F5F9F0; --border:#CFDEC1;
+  --brand:#58B615; --brand-bg:#E0F3C4; --brand-dk:#367A08;
+  --ink:#121E0F; --ink2:#3B5236; --muted:#76986A;
+  --danger:#CF3030; --danger-bg:#FCEAEA;
+  --warn:#B86D08; --warn-bg:#FDF0DC;
+  --ok:#187A3C; --ok-bg:#D4F4E2;
+  --r:14px; --r-sm:9px;
+  --sh:0 1px 3px rgba(18,30,15,.07),0 4px 12px rgba(18,30,15,.04);
+  --sh-lg:0 8px 24px rgba(18,30,15,.12);
+}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#0B1209; --surface:#141F10; --s2:#1A2816; --border:#223520;
+  --brand:#6CD020; --brand-bg:#193013; --brand-dk:#90E04A;
+  --ink:#E6F3DF; --ink2:#A5C098; --muted:#7DA870;
+  --danger:#F06060; --danger-bg:#280F0F;
+  --warn:#E09020; --warn-bg:#241704;
+  --ok:#40C870; --ok-bg:#0C2216;
+  --sh:0 1px 3px rgba(0,0,0,.3),0 4px 12px rgba(0,0,0,.2);
+  --sh-lg:0 8px 24px rgba(0,0,0,.4);
+}}
+:root[data-theme=dark]{
+  --bg:#0B1209; --surface:#141F10; --s2:#1A2816; --border:#223520;
+  --brand:#6CD020; --brand-bg:#193013; --brand-dk:#90E04A;
+  --ink:#E6F3DF; --ink2:#A5C098; --muted:#7DA870;
+  --danger:#F06060; --danger-bg:#280F0F;
+  --warn:#E09020; --warn-bg:#241704;
+  --ok:#40C870; --ok-bg:#0C2216;
+  --sh:0 1px 3px rgba(0,0,0,.3),0 4px 12px rgba(0,0,0,.2);
+  --sh-lg:0 8px 24px rgba(0,0,0,.4);
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-tap-highlight-color:transparent}
+body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--ink);min-height:100dvh;display:flex;justify-content:center}
+#app{width:100%;max-width:430px;min-height:100dvh;background:var(--bg);display:flex;flex-direction:column;position:relative;overflow-x:hidden}
+
+/* HEADER */
+.hdr{position:sticky;top:0;z-index:30;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;height:56px;gap:12px}
+.hdr-back{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;border:1px solid var(--border);background:var(--s2);cursor:pointer;flex-shrink:0;transition:background .15s}
+.hdr-back:hover{background:var(--brand-bg)}
+.hdr-back svg{width:16px;height:16px;stroke:var(--ink);fill:none;stroke-width:2.2;stroke-linecap:round}
+.hdr-title{font-size:16px;font-weight:700;letter-spacing:-.01em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.logo-name{font-size:19px;font-weight:800;letter-spacing:-.04em}
+.logo-name em{font-style:normal;color:var(--brand)}
+.hdr-badge{background:var(--brand);color:var(--ink);font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;cursor:pointer;white-space:nowrap}
+
+/* SCROLL BODY */
+.body{flex:1;overflow-y:auto;overflow-x:hidden;padding:20px 16px 132px;display:flex;flex-direction:column;gap:16px}
+.body::-webkit-scrollbar{display:none}
+
+/* BOTTOM NAV */
+.bnav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:var(--surface);border-top:1px solid var(--border);display:flex;padding:8px 0 max(8px,env(safe-area-inset-bottom));z-index:30}
+.ni{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0;cursor:pointer;border:none;background:transparent;color:var(--muted);position:relative}
+.ni.on{color:var(--brand-dk)}
+.ni-icon{font-size:20px;line-height:1}
+.ni-lbl{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.ni-dot{position:absolute;top:2px;right:calc(50% - 14px);width:8px;height:8px;background:var(--danger);border-radius:50%;border:2px solid var(--surface)}
+
+/* DEMO STRIP */
+.demo{position:fixed;bottom:66px;left:50%;transform:translateX(-50%);width:calc(100% - 24px);max-width:406px;z-index:40;background:var(--ink);color:#fff;border-radius:var(--r);padding:9px 12px;display:flex;align-items:center;gap:8px;box-shadow:var(--sh-lg)}
+.demo-lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;opacity:.45;white-space:nowrap}
+.demo-chips{display:flex;gap:5px;flex:1;overflow-x:auto}
+.demo-chips::-webkit-scrollbar{display:none}
+.dc{border-radius:20px;padding:4px 11px;font-size:12px;font-weight:700;cursor:pointer;border:1.5px solid transparent;white-space:nowrap;transition:all .15s}
+.dc.on{background:var(--brand);color:var(--ink);border-color:var(--brand)}
+.dc:not(.on){background:rgba(255,255,255,.09);color:rgba(255,255,255,.72);border-color:rgba(255,255,255,.14)}
+.dc:not(.on):hover{background:rgba(255,255,255,.16)}
+
+/* CARDS */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.card2{background:var(--s2);border:1px solid var(--border);border-radius:var(--r-sm);padding:13px 15px}
+
+/* STATUS PILLS */
+.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.pill::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.p-posted{background:#EEF1F7;color:#4A608A}
+.p-bidding{background:var(--warn-bg);color:var(--warn)}
+.p-assigned{background:#E8EDFE;color:#3651B0}
+.p-prog{background:#EDE8FF;color:#5B3ECC}
+.p-payout{background:#FEF1DF;color:#9A5A0A}
+.p-done{background:var(--ok-bg);color:var(--ok)}
+.p-disp{background:var(--danger-bg);color:var(--danger)}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .p-posted{background:#1A2132;color:#7A9ABE}
+:root:not([data-theme=light]) .p-bidding{background:#2A1C04;color:#D09020}
+:root:not([data-theme=light]) .p-assigned{background:#101A3C;color:#7A90E0}
+:root:not([data-theme=light]) .p-prog{background:#18103C;color:#9880E8}
+:root:not([data-theme=light]) .p-payout{background:#281808;color:#D09040}}
+:root[data-theme=dark] .p-posted{background:#1A2132;color:#7A9ABE}
+:root[data-theme=dark] .p-bidding{background:#2A1C04;color:#D09020}
+:root[data-theme=dark] .p-assigned{background:#101A3C;color:#7A90E0}
+:root[data-theme=dark] .p-prog{background:#18103C;color:#9880E8}
+:root[data-theme=dark] .p-payout{background:#281808;color:#D09040}
+
+/* JOB CARDS */
+.jcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;cursor:pointer;transition:border-color .15s,box-shadow .15s;display:flex;flex-direction:column;gap:10px}
+.jcard:hover{border-color:var(--brand);box-shadow:var(--sh)}
+.jnum{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;color:var(--brand-dk);letter-spacing:.04em}
+.jaddr{font-size:15px;font-weight:700;letter-spacing:-.015em;margin-top:2px}
+.jmeta{font-size:12px;color:var(--muted);margin-top:2px}
+.jprice{font-size:20px;font-weight:800;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.tag{font-size:11px;font-weight:600;background:var(--brand-bg);color:var(--brand-dk);padding:2px 8px;border-radius:12px}
+
+/* FLOW TRACK */
+.flow{display:flex;padding:6px 0;overflow-x:auto}
+.flow::-webkit-scrollbar{display:none}
+.fs{display:flex;flex-direction:column;align-items:center;gap:5px;flex:1;min-width:50px;position:relative}
+.fs::before{content:'';position:absolute;top:9px;left:0;right:50%;height:2px;background:var(--border);z-index:0}
+.fs::after{content:'';position:absolute;top:9px;left:50%;right:0;height:2px;background:var(--border);z-index:0}
+.fs:first-child::before{display:none}
+.fs:last-child::after{display:none}
+.fs.done::before,.fs.done::after{background:var(--brand)}
+.fs.cur::before{background:var(--brand)}
+.fd{width:20px;height:20px;border-radius:50%;border:2px solid var(--border);background:var(--surface);z-index:1;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:900;color:transparent;transition:all .2s}
+.fs.done .fd{border-color:var(--brand);background:var(--brand);color:var(--ink)}
+.fs.cur .fd{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-bg)}
+.fs.cur .fd::after{content:'';width:8px;height:8px;background:var(--brand);border-radius:50%}
+.fl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:center;line-height:1.2}
+.fs.cur .fl{color:var(--brand-dk)}
+
+/* TABS */
+.tabs{display:flex;gap:2px;background:var(--s2);border-radius:calc(var(--r-sm) + 2px);padding:3px}
+.tb{flex:1;padding:8px 6px;border-radius:var(--r-sm);border:none;background:transparent;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;gap:4px;font-family:'DM Sans',sans-serif}
+.tb.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(18,30,15,.1)}
+.tbadge{min-width:16px;height:16px;background:var(--danger);color:#fff;font-size:9px;font-weight:800;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;padding:0 3px}
+
+/* SECTION HEADER */
+.sh{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+
+/* CHAT */
+.chat{display:flex;flex-direction:column;gap:14px;padding-bottom:4px}
+.mrow{display:flex;align-items:flex-end;gap:8px}
+.mrow.me{flex-direction:row-reverse}
+.mav{width:28px;height:28px;border-radius:50%;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.mb{max-width:78%;padding:10px 14px;border-radius:18px;font-size:14px;line-height:1.5;word-break:break-word}
+.mb.hauler{background:var(--brand-bg);color:var(--ink);border-bottom-left-radius:4px}
+.mb.customer{background:var(--ink);color:#E8F5E2;border-bottom-right-radius:4px}
+.mts{font-size:10px;color:var(--muted);padding:0 4px;margin-top:2px}
+.chat-in{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:10px 16px;padding-bottom:max(10px,env(safe-area-inset-bottom));display:flex;gap:8px;align-items:flex-end}
+.ci{flex:1;background:var(--s2);border:1.5px solid var(--border);border-radius:22px;padding:10px 16px;font-size:14px;font-family:'DM Sans',sans-serif;color:var(--ink);resize:none;min-height:42px;max-height:120px;outline:none;transition:border-color .15s;line-height:1.4}
+.ci:focus{border-color:var(--brand)}
+.csend{width:42px;height:42px;border-radius:50%;background:var(--brand);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:opacity .15s}
+.csend:hover{opacity:.85}
+.cempty{text-align:center;padding:36px 16px;color:var(--muted);font-size:13px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.chat-date{text-align:center;font-size:10px;font-weight:700;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;padding:2px 0}
+
+/* PAYMENT CARD */
+.paycrd{background:linear-gradient(135deg,#182C3A,#0E1D28);color:#fff;border-radius:var(--r);padding:20px;position:relative;overflow:hidden}
+.paycrd::before{content:'';position:absolute;top:-24px;right:-24px;width:110px;height:110px;background:rgba(88,182,21,.14);border-radius:50%}
+.pay-lbl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.1em;opacity:.45;margin-bottom:6px}
+.pay-amt{font-size:30px;font-weight:800;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.pay-sub{font-size:12px;opacity:.55;margin-top:3px}
+.pay-st{display:flex;align-items:center;gap:7px;margin-top:14px;font-size:12px;font-weight:600}
+.pay-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.stripe-row{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.11);border-radius:8px;padding:7px 10px;font-size:11px;font-weight:600;margin-top:10px;color:rgba(255,255,255,.65)}
+.stripe-s{width:16px;height:16px;background:#635BFF;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;font-weight:900;font-style:italic;flex-shrink:0}
+
+/* REVIEWS */
+.star-r{display:flex;gap:5px}
+.star{font-size:26px;cursor:pointer;border:none;background:transparent;border-radius:6px;padding:2px;transition:transform .1s;line-height:1}
+.star:hover{transform:scale(1.18)}
+.star.sm{font-size:14px;cursor:default}
+.rev-note{font-size:14px;color:var(--ink2);line-height:1.55;font-style:italic}
+
+/* ESTIMATES */
+.estcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:14px 15px;display:flex;align-items:center;gap:12px;transition:border-color .15s}
+.estcard:hover{border-color:var(--brand)}
+.estav{width:40px;height:40px;border-radius:50%;background:var(--brand-bg);color:var(--brand-dk);font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.estinfo{flex:1;min-width:0}
+.estn{font-size:14px;font-weight:700}
+.estr{font-size:12px;color:var(--muted);margin-top:2px}
+.estprice{font-size:18px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.estbtn{background:var(--brand);color:var(--ink);border:none;border-radius:8px;padding:7px 13px;font-size:12px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;transition:opacity .15s}
+.estbtn:hover{opacity:.85}
+
+/* FORMS */
+.fg{display:flex;flex-direction:column;gap:6px}
+.fl-lbl{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.fi{background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r-sm);padding:11px 14px;font-size:14px;font-family:'DM Sans',sans-serif;color:var(--ink);outline:none;transition:border-color .15s;width:100%}
+.fi:focus{border-color:var(--brand)}
+.fi-ta{min-height:82px;resize:vertical;line-height:1.5}
+.type-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ttog{background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r-sm);padding:10px;font-size:13px;font-weight:600;cursor:pointer;text-align:center;transition:all .15s;font-family:'DM Sans',sans-serif;color:var(--ink)}
+.ttog.on{border-color:var(--brand);background:var(--brand-bg);color:var(--brand-dk)}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px;border-radius:12px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;transition:opacity .15s;width:100%}
+.btn:hover{opacity:.88}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-brand{background:var(--brand);color:var(--ink)}
+.btn-brd{background:transparent;border:1.5px solid var(--border);color:var(--ink)}
+.btn-brd:hover{border-color:var(--brand) !important;opacity:1}
+.btn-danger{background:var(--danger);color:#fff}
+.step-dots{display:flex;gap:6px;justify-content:center}
+.sd{width:6px;height:6px;border-radius:50%;background:var(--border);transition:all .2s}
+.sd.on{width:20px;border-radius:3px;background:var(--brand)}
+
+/* STATS */
+.stats{display:flex;gap:10px}
+.stat{flex:1;background:var(--s2);border:1px solid var(--border);border-radius:var(--r-sm);padding:12px;text-align:center}
+.sv{font-size:20px;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.sl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-top:2px}
+
+/* PHOTO GRID */
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pbox{border-radius:var(--r-sm);overflow:hidden;position:relative;aspect-ratio:1;background:var(--s2)}
+.pbox img{width:100%;height:100%;object-fit:cover}
+.pph{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;border:2px dashed var(--border)}
+.pph-ic{font-size:24px}
+.pph-tx{font-size:11px;color:var(--muted);font-weight:600}
+.plbl{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.52);color:#fff;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:5px 8px}
+
+/* CONTRACTOR ROW */
+.hrow{display:flex;align-items:center;gap:12px}
+.hav{width:44px;height:44px;border-radius:50%;background:var(--brand);color:var(--ink);font-size:15px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hn{font-size:15px;font-weight:700}
+.hm{font-size:12px;color:var(--muted);margin-top:2px}
+.msg-btn{background:var(--brand-bg);color:var(--brand-dk);border:none;border-radius:8px;padding:8px 13px;font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;transition:opacity .15s}
+.msg-btn:hover{opacity:.8}
+
+/* ALERTS */
+.alert{border-radius:var(--r-sm);padding:12px 14px;font-size:13px;line-height:1.45;display:flex;gap:9px;font-weight:500}
+.al-i{flex-shrink:0;font-size:15px}
+.al-ok{background:var(--ok-bg);color:var(--ok)}
+.al-warn{background:var(--warn-bg);color:var(--warn)}
+.al-danger{background:var(--danger-bg);color:var(--danger)}
+
+/* AVAIL CARDS (hauler) */
+.acard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:10px;cursor:pointer;transition:border-color .15s}
+.acard:hover{border-color:var(--brand)}
+.aei{flex:1;background:var(--s2);border:1.5px solid var(--border);border-radius:8px;padding:8px 12px;font-size:14px;font-family:'DM Sans',sans-serif;font-weight:600;color:var(--ink);outline:none;transition:border-color .15s}
+.aei:focus{border-color:var(--brand)}
+.aebtn{background:var(--brand);color:var(--ink);border:none;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap}
+
+/* EMPTY */
+.empty{text-align:center;padding:48px 20px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.empty-ic{font-size:40px}
+.empty-t{font-size:16px;font-weight:700}
+.empty-b{font-size:13px;color:var(--muted);max-width:230px;text-wrap:balance}
+
+/* UTILS */
+.row{display:flex}
+.col{display:flex;flex-direction:column}
+.gap1{gap:4px}.gap2{gap:8px}.gap3{gap:12px}.gap4{gap:16px}
+.between{justify-content:space-between}
+.items-start{align-items:flex-start}
+.items-center{align-items:center}
+.flex1{flex:1;min-width:0}
+.ovh{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.divider{height:1px;background:var(--border)}
+.mono{font-family:'JetBrains Mono',monospace}
+.fnum{font-variant-numeric:tabular-nums}
+.text-muted{color:var(--muted)}
+.text-sm{font-size:13px}
+.text-xs{font-size:11px}
+.fw7{font-weight:700}.fw8{font-weight:800}
+.mt3{margin-top:12px}.mt4{margin-top:16px}
+
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+</style>
+
+<div id="app"></div>
+
+<script>
+/* ── DATA ────────────────────────────────────────────── */
+
+const USERS = {
+  customer: { id:'alice', name:'Alice M.', init:'AM' },
+  hauler:   { id:'bob',   name:"Bob's Big Haul", init:'BB' },
+};
+
+const JOBS = [
+  { id:'jr-2041', num:'JR-2041', status:'BIDDING',
+    addr:'4821 W Dunlap Ave', city:'Phoenix, AZ',
+    types:['Furniture','Appliances'], stories:1,
+    price:0, payout:0, hauler:null, hRating:null, hJobs:null,
+    estimates:[
+      {id:'e1',name:'Desert Haul Co.',init:'DH',rating:4.8,jobs:34,cents:24500},
+      {id:'e2',name:"Bob's Big Haul",init:'BB',rating:4.9,jobs:47,cents:27000},
+      {id:'e3',name:'AZ Junk Kings',init:'AJ',rating:4.6,jobs:22,cents:31500},
+    ],
+    before:'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&q=75',
+    after:null,
+    note:'Old sectional couch, 2 mattresses, broken washer in garage. Gate code 1847.',
+    ago:'2h ago', disputeEnd:null },
+  { id:'jr-2039', num:'JR-2039', status:'IN_PROGRESS',
+    addr:'9203 N 19th Ave', city:'Phoenix, AZ',
+    types:['Full Cleanout','Yard Debris'], stories:2,
+    price:48000, payout:43200, hauler:"Bob's Big Haul", hRating:4.9, hJobs:47,
+    estimates:[],
+    before:'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&q=75',
+    after:null,
+    note:'2-bed house cleanout after tenant move-out. Lots of furniture and bags of clothing.',
+    ago:'2d ago', disputeEnd:null },
+  { id:'jr-2037', num:'JR-2037', status:'PENDING_PAYOUT',
+    addr:'1540 E Thomas Rd', city:'Scottsdale, AZ',
+    types:['Appliances'], stories:1,
+    price:18500, payout:16650, hauler:"Bob's Big Haul", hRating:4.9, hJobs:47,
+    estimates:[],
+    before:'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&q=75',
+    after:'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=600&q=75',
+    note:'Fridge, stove, dryer. Utility room, ground floor. Easy access.',
+    ago:'4d ago', disputeEnd: new Date(Date.now()+18*3600000).toISOString() },
+  { id:'jr-2035', num:'JR-2035', status:'COMPLETED',
+    addr:'7721 S 48th St', city:'Tempe, AZ',
+    types:['Yard Debris'], stories:1,
+    price:14500, payout:13050, hauler:"Bob's Big Haul", hRating:4.9, hJobs:47,
+    estimates:[],
+    before:'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=600&q=75',
+    after:'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=600&q=75',
+    note:'Post-storm cleanup — branches, palm fronds, broken patio umbrella.',
+    ago:'1w ago', disputeEnd:null },
+];
+
+const AVAIL = [
+  { id:'jr-2043', num:'JR-2043', status:'BIDDING',
+    addr:'3102 E McDowell Rd', city:'Phoenix, AZ',
+    types:['Furniture','Mattresses'], note:'Queen mattress, metal frame, dresser + nightstand.', ago:'45m ago', bids:1 },
+  { id:'jr-2042', num:'JR-2042', status:'BIDDING',
+    addr:'825 W University Dr', city:'Tempe, AZ',
+    types:['General Junk','Electronics'], note:'Apartment move-out: 6 large bags + old TV and monitors.', ago:'1h ago', bids:0 },
+];
+
+const SEED_MSGS = {
+  'jr-2039':[
+    {id:'m1',role:'hauler',text:"On my way, about 20 min out. Any gate code?",ts:Date.now()-4*3600000},
+    {id:'m2',role:'customer',text:"No gate, just pull into the driveway. I'll be home.",ts:Date.now()-4*3600000+200000},
+    {id:'m3',role:'hauler',text:"Perfect. Upstairs bedroom has more than expected — might need a second trip.",ts:Date.now()-3*3600000},
+    {id:'m4',role:'customer',text:"That's fine, no rush 👍",ts:Date.now()-3*3600000+220000},
+  ],
+  'jr-2037':[
+    {id:'m1',role:'hauler',text:"All three appliances loaded and cleared. After photos uploaded.",ts:Date.now()-2*86400000},
+    {id:'m2',role:'customer',text:"Wow, fast work! Looks great, thank you!",ts:Date.now()-2*86400000+300000},
+    {id:'m3',role:'hauler',text:"Happy to help. Everything went to a certified recycler — receipt available if needed.",ts:Date.now()-2*86400000+600000},
+  ],
+  'jr-2035':[
+    {id:'m1',role:'customer',text:"Just confirming you're still on for Saturday?",ts:Date.now()-8*86400000},
+    {id:'m2',role:'hauler',text:"Confirmed — I'll be there 8–9am.",ts:Date.now()-8*86400000+900000},
+    {id:'m3',role:'customer',text:"Perfect, thanks!",ts:Date.now()-8*86400000+1200000},
+    {id:'m4',role:'hauler',text:"All done! Yard is completely clear. Feel free to leave a review.",ts:Date.now()-7*86400000},
+    {id:'m5',role:'customer',text:"Incredible job. Fastest cleanout I've ever seen 🙌",ts:Date.now()-7*86400000+1800000},
+  ],
+};
+
+const SEED_REVIEWS = {
+  'jr-2035':{
+    customer:{stars:5,note:"Bob was incredibly professional and fast. Left zero mess. Will hire again.",ts:Date.now()-6*86400000},
+    hauler:{stars:5,note:"Great customer, easy access, everything clearly labeled. Would take this job again.",ts:Date.now()-6*86400000+3600000},
+  }
+};
+
+/* ── STATE ───────────────────────────────────────────── */
+
+const S = {
+  role: localStorage.getItem('jr_role')||'customer',
+  view:'dash', jobId:null, jobTab:'details',
+  postStep:1, postData:{types:[],addr:'',city:'Phoenix, AZ',stories:'1',note:''},
+  dbRef:null,
+  dbMsgs:{},    // jobId -> items[]
+  dbRevs:{},    // jobId -> {customer,hauler}
+  revDraft:{},  // jobId -> {stars,note}
+  unread:{},
+};
+
+function getMsgs(jid){
+  const d=S.dbMsgs[jid];
+  return (d&&d.length)?d:(SEED_MSGS[jid]||[]);
+}
+function getRevs(jid){
+  return S.dbRevs[jid]||SEED_REVIEWS[jid]||{customer:null,hauler:null};
+}
+
+/* ── UTILS ───────────────────────────────────────────── */
+
+function fc(c){if(!c)return'TBD';return'$'+(c/100).toLocaleString('en-US',{maximumFractionDigits:0})}
+function ft(ts){
+  const d=Date.now()-ts,m=Math.floor(d/60000);
+  if(m<1)return'just now';if(m<60)return m+'m ago';
+  const h=Math.floor(m/60);if(h<24)return h+'h ago';
+  return new Date(ts).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+
+function pill(st){
+  const map={
+    POSTED:['p-posted','Posted'],BIDDING:['p-bidding','Bidding'],
+    ASSIGNED:['p-assigned','Assigned'],IN_PROGRESS:['p-prog','In Progress'],
+    PENDING_PAYOUT:['p-payout','Payout Pending'],COMPLETED:['p-done','Completed'],
+    DISPUTED:['p-disp','Disputed'],
+  };
+  const[cls,lbl]=map[st]||['p-posted',st];
+  return`<span class="pill ${cls}">${lbl}</span>`;
+}
+
+function starHtml(n,sm,jid){
+  return Array.from({length:5},(_,i)=>
+    `<button class="star${sm?' sm':''}"${jid?` onclick="setStar('${jid}',${i+1})"`:' style="cursor:default"'}>${i<n?'⭐':'☆'}</button>`
+  ).join('');
+}
+
+const FLOW_STEPS=['Posted','Bidding','Assigned','In Progress','Completed'];
+const FLOW_IDX={POSTED:0,BIDDING:1,ASSIGNED:2,IN_PROGRESS:3,PENDING_PAYOUT:3,COMPLETED:4,DISPUTED:3};
+function renderFlow(st){
+  const cur=FLOW_IDX[st]??0;
+  return`<div class="flow">${FLOW_STEPS.map((l,i)=>{
+    const done=i<cur,c=i===cur;
+    return`<div class="fs${done?' done':c?' cur':''}">
+      <div class="fd">${done?'✓':''}</div>
+      <div class="fl">${l}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function hdr({title,back,logo,badge}={}){
+  return`<div class="hdr">
+    ${back?`<button class="hdr-back" onclick="${esc(back)}"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></button>`:''}
+    ${logo?`<div class="logo-name">Junk<em>Run</em></div>`:''}
+    <div class="hdr-title">${title?esc(title):''}</div>
+    ${badge?`<div class="hdr-badge" onclick="${esc(badge.fn)}">${esc(badge.lbl)}</div>`:''}
+  </div>`;
+}
+
+function bnav(){
+  const v=S.view,r=S.role;
+  const unr=Object.values(S.unread).reduce((a,b)=>a+b,0);
+  if(r==='customer') return`<div class="bnav">
+    <button class="ni${v==='dash'?' on':''}" onclick="go('dash')"><span class="ni-icon">🏠</span><span class="ni-lbl">Jobs</span></button>
+    <button class="ni" onclick="go('post')"><span class="ni-icon">➕</span><span class="ni-lbl">Post</span></button>
+    <button class="ni" onclick="goChat()" style="position:relative"><span class="ni-icon">💬</span><span class="ni-lbl">Messages</span>${unr?'<span class="ni-dot"></span>':''}</button>
+    <button class="ni${v==='profile'?' on':''}" onclick="go('profile')"><span class="ni-icon">👤</span><span class="ni-lbl">Profile</span></button>
+  </div>`;
+  return`<div class="bnav">
+    <button class="ni${v==='dash'?' on':''}" onclick="go('dash')"><span class="ni-icon">🏠</span><span class="ni-lbl">Dashboard</span></button>
+    <button class="ni${v==='avail'?' on':''}" onclick="go('avail')"><span class="ni-icon">📋</span><span class="ni-lbl">Find Jobs</span></button>
+    <button class="ni" onclick="goChat()" style="position:relative"><span class="ni-icon">💬</span><span class="ni-lbl">Messages</span>${unr?'<span class="ni-dot"></span>':''}</button>
+    <button class="ni${v==='profile'?' on':''}" onclick="go('profile')"><span class="ni-icon">👤</span><span class="ni-lbl">Profile</span></button>
+  </div>`;
+}
+
+function demoStrip(){
+  return`<div class="demo">
+    <div class="demo-lbl">Demo</div>
+    <div class="demo-chips">
+      <div class="dc${S.role==='customer'?' on':''}" onclick="switchRole('customer')">👤 Alice · Customer</div>
+      <div class="dc${S.role==='hauler'?' on':''}" onclick="switchRole('hauler')">🚛 Bob · Contractor</div>
+    </div>
+  </div>`;
+}
+
+/* ── VIEWS ───────────────────────────────────────────── */
+
+function viewDash(){
+  if(S.role==='customer'){
+    const active=JOBS.filter(j=>j.status!=='COMPLETED');
+    const done=JOBS.filter(j=>j.status==='COMPLETED');
+    return hdr({logo:true})+`
+    <div class="body">
+      <div class="col gap1">
+        <div style="font-size:21px;font-weight:800;letter-spacing:-.025em">Morning, Alice 👋</div>
+        <div class="text-sm text-muted">${active.length} active job${active.length!==1?'s':''}</div>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="sv">${active.length}</div><div class="sl">Active</div></div>
+        <div class="stat"><div class="sv fnum">$813</div><div class="sl">Spent</div></div>
+        <div class="stat"><div class="sv">4.9★</div><div class="sl">Avg Rating</div></div>
+      </div>
+      ${active.length?`<div class="sh">Active Jobs</div><div class="col gap3">${active.map(jCard).join('')}</div>`:''}
+      ${done.length?`<div class="sh">Completed</div><div class="col gap3">${done.map(jCard).join('')}</div>`:''}
+    </div>`+bnav()+demoStrip();
+  }
+  // Hauler dash
+  const mine=JOBS.filter(j=>j.hauler);
+  const active=mine.filter(j=>j.status!=='COMPLETED');
+  const done=mine.filter(j=>j.status==='COMPLETED');
+  return hdr({logo:true})+`
+  <div class="body">
+    <div class="col gap1">
+      <div style="font-size:21px;font-weight:800;letter-spacing:-.025em">Hey Bob 🚛</div>
+      <div class="text-sm text-muted">${AVAIL.length} jobs available nearby</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="sv">47</div><div class="sl">Completed</div></div>
+      <div class="stat"><div class="sv fnum">$3.8k</div><div class="sl">Earned</div></div>
+      <div class="stat"><div class="sv">4.9★</div><div class="sl">Rating</div></div>
+    </div>
+    ${active.length?`<div class="sh">My Active Jobs</div><div class="col gap3">${active.map(j=>jCard(j,'hauler')).join('')}</div>`:''}
+    <div class="sh">Nearby · <span style="font-size:10px;color:var(--brand-dk);font-weight:700;text-transform:none;letter-spacing:0">${AVAIL.length} open bids</span></div>
+    <div class="col gap3">${AVAIL.map(availCard).join('')}</div>
+    ${done.length?`<div class="sh">Completed</div><div class="col gap3">${done.map(j=>jCard(j,'hauler')).join('')}</div>`:''}
+  </div>`+bnav()+demoStrip();
+}
+
+function jCard(j,forRole){
+  const role=forRole||S.role;
+  const msgs=getMsgs(j.id);
+  const last=msgs[msgs.length-1];
+  const unr=S.unread[j.id]||0;
+  const price=role==='hauler'?j.payout:j.price;
+  return`<div class="jcard" onclick="openJob('${j.id}')">
+    <div class="row between items-start gap2">
+      <div class="flex1">
+        <div class="jnum mono">${j.num}</div>
+        <div class="jaddr">${esc(j.addr)}</div>
+        <div class="jmeta">${esc(j.city)} · ${j.ago}</div>
+      </div>
+      <div class="col items-end gap1">
+        ${price?`<div class="jprice fnum">${fc(price)}</div>`:''}
+        ${pill(j.status)}
+      </div>
+    </div>
+    <div class="row between items-center">
+      <div class="col gap1 flex1">
+        <div class="row gap1">${j.types.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
+        ${last?`<div class="text-xs text-muted ovh" style="max-width:220px">💬 ${esc(last.text.slice(0,55))}${last.text.length>55?'…':''}</div>`:''}
+      </div>
+      ${unr?`<span style="min-width:18px;height:18px;background:var(--danger);color:#fff;font-size:10px;font-weight:800;border-radius:9px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px">${unr}</span>`:''}
+    </div>
+  </div>`;
+}
+
+function availCard(j){
+  return`<div class="acard" onclick="openAvail('${j.id}')">
+    <div class="row between items-start gap2">
+      <div class="flex1">
+        <div class="jnum mono">${j.num}</div>
+        <div class="jaddr">${esc(j.addr)}</div>
+        <div class="jmeta">${esc(j.city)} · ${j.ago} · ${j.bids} bid${j.bids!==1?'s':''}</div>
+        <div class="row gap1 mt3">${j.types.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
+      </div>
+      ${pill(j.status)}
+    </div>
+    <div class="text-sm" style="color:var(--ink2);line-height:1.45">${esc(j.note)}</div>
+    <div class="row gap2" onclick="event.stopPropagation()">
+      <input class="aei" type="text" placeholder="Your quote (e.g. $225)" id="aei-${j.id}">
+      <button class="aebtn" onclick="submitBid('${j.id}')">Bid →</button>
+    </div>
+  </div>`;
+}
+
+function viewJob(jid){
+  const job=JOBS.find(j=>j.id===jid)||AVAIL.find(j=>j.id===jid);
+  if(!job)return viewDash();
+  const tab=S.jobTab;
+  const msgs=getMsgs(jid);
+  const revs=getRevs(jid);
+  const unr=S.unread[jid]||0;
+  const price=S.role==='hauler'?job.payout:job.price;
+
+  return hdr({title:job.num,back:"go('dash')"})+`
+  <div class="body" id="jbody">
+    <!-- Summary -->
+    <div class="row between items-start gap2">
+      <div class="flex1">
+        <div style="font-size:18px;font-weight:800;letter-spacing:-.02em;line-height:1.2">${esc(job.addr)}</div>
+        <div class="text-sm text-muted mt3">${esc(job.city)}</div>
+      </div>
+      <div class="col items-end gap1">
+        ${price?`<div style="font-size:26px;font-weight:800;letter-spacing:-.04em;font-variant-numeric:tabular-nums">${fc(price)}</div>
+        ${S.role==='hauler'?`<div class="text-xs text-muted">after 10% fee</div>`:''}`:''}
+        ${pill(job.status)}
+      </div>
+    </div>
+    ${job.status!=='BIDDING'&&job.status!=='POSTED'?renderFlow(job.status):''}
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tb${tab==='details'?' on':''}" onclick="setTab('details')">Details</button>
+      <button class="tb${tab==='chat'?' on':''}" onclick="setTab('chat')">
+        Chat${unr&&tab!=='chat'?` <span class="tbadge">${unr}</span>`:''}
+      </button>
+      <button class="tb${tab==='reviews'?' on':''}" onclick="setTab('reviews')">Reviews</button>
+    </div>
+    ${tab==='details'?tabDetails(job):''}
+    ${tab==='chat'?tabChat(job,msgs):''}
+    ${tab==='reviews'?tabReviews(job,revs):''}
+  </div>
+  ${tab==='chat'?chatInput(jid):bnav()}
+  ${demoStrip()}`;
+}
+
+function tabDetails(job){
+  const isHauler=S.role==='hauler';
+  return`<div class="col gap3">
+    <!-- Info -->
+    <div class="card col gap3">
+      <div class="fw7">Job Details</div>
+      <div class="row gap1">${job.types.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><div class="text-xs text-muted" style="font-weight:700;text-transform:uppercase;letter-spacing:.05em">Floor</div><div class="fw7 mt3">${job.stories===0?'Ground':job.stories+' up'}</div></div>
+        <div><div class="text-xs text-muted" style="font-weight:700;text-transform:uppercase;letter-spacing:.05em">Posted</div><div class="fw7 mt3">${job.ago}</div></div>
+      </div>
+      ${job.note?`<div class="divider"></div><div class="text-sm" style="color:var(--ink2);line-height:1.5">${esc(job.note)}</div>`:''}
+    </div>
+    <!-- Photos -->
+    <div class="card">
+      <div class="fw7" style="margin-bottom:10px">Photos</div>
+      <div class="pgrid">
+        <div class="pbox">
+          ${job.before?`<img src="${job.before}" alt="Before" loading="lazy"><div class="plbl">Before</div>`:
+          `<div class="pph"><div class="pph-ic">📷</div><div class="pph-tx">No photo</div></div>`}
+        </div>
+        <div class="pbox">
+          ${job.after?`<img src="${job.after}" alt="After" loading="lazy"><div class="plbl">After</div>`:
+          `<div class="pph"><div class="pph-ic">${['IN_PROGRESS','ASSIGNED'].includes(job.status)?'⏳':'📷'}</div><div class="pph-tx">${['IN_PROGRESS','ASSIGNED'].includes(job.status)?'In progress':'Pending'}</div></div>`}
+        </div>
+      </div>
+    </div>
+    <!-- Estimates (customer + BIDDING) -->
+    ${job.status==='BIDDING'&&!isHauler&&job.estimates.length?`
+    <div class="col gap2">
+      <div class="sh">Estimates (${job.estimates.length})</div>
+      ${job.estimates.map(e=>`
+      <div class="estcard">
+        <div class="estav">${e.init}</div>
+        <div class="estinfo">
+          <div class="estn">${esc(e.name)}</div>
+          <div class="estr">⭐ ${e.rating} · ${e.jobs} jobs</div>
+        </div>
+        <div class="col items-end gap2">
+          <div class="estprice fnum">${fc(e.cents)}</div>
+          <button class="estbtn" onclick="acceptEst('${e.id}','${job.id}')">Accept</button>
+        </div>
+      </div>`).join('')}
+    </div>`:'' }
+    <!-- Contractor card (customer) -->
+    ${job.hauler&&!isHauler?`
+    <div class="card">
+      <div class="text-xs text-muted fw7" style="text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px">Your Contractor</div>
+      <div class="hrow">
+        <div class="hav">BB</div>
+        <div class="flex1">
+          <div class="hn">${esc(job.hauler)}</div>
+          <div class="hm">⭐ ${job.hRating} · ${job.hJobs} jobs</div>
+        </div>
+        <button class="msg-btn" onclick="setTab('chat')">💬 Chat</button>
+      </div>
+    </div>`:''}
+    <!-- Payment -->
+    ${job.price?`
+    <div class="paycrd">
+      <div class="pay-lbl">Payment</div>
+      <div class="pay-amt fnum">${fc(isHauler?job.payout:job.price)}</div>
+      <div class="pay-sub">${isHauler?'Your payout · after 10% platform fee':'Held in escrow · releases when job is complete'}</div>
+      <div class="pay-st">
+        <div class="pay-dot" style="background:${job.status==='COMPLETED'?'#40C870':job.status==='PENDING_PAYOUT'?'#E09020':'#7DA870'}"></div>
+        ${job.status==='COMPLETED'?'Payment released':job.status==='PENDING_PAYOUT'?'Awaiting release · dispute window open':'Funds secured'}
+      </div>
+      <div class="stripe-row">
+        <div class="stripe-s">S</div>
+        Stripe Connect — integration pending
+        <span style="margin-left:auto;opacity:.45;font-size:10px">→ connect</span>
+      </div>
+    </div>`:'' }
+    <!-- Dispute window -->
+    ${job.status==='PENDING_PAYOUT'&&job.disputeEnd&&!isHauler?`
+    <div class="alert al-warn"><div class="al-i">⏱</div><div>Dispute window closes ${new Date(job.disputeEnd).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}. Payout auto-releases after.</div></div>
+    <button class="btn btn-brd" onclick="alert('Dispute flow — Stripe webhook integration pending.')">File a Dispute</button>`:'' }
+    ${job.status==='PENDING_PAYOUT'&&isHauler?`
+    <div class="alert al-warn"><div class="al-i">⏱</div><div>Dispute window open. Payout releases automatically if no dispute is filed.</div></div>`:'' }
+    ${job.status==='COMPLETED'?`
+    <div class="alert al-ok"><div class="al-i">✓</div><div>${isHauler?'Payment released to your account.':'Job complete — contractor has been paid.'}</div></div>`:'' }
+  </div>`;
+}
+
+function tabChat(job,msgs){
+  const canChat=job.hauler||(S.role==='hauler');
+  if(!canChat){
+    return`<div class="cempty"><div style="font-size:36px">💬</div><div class="fw7" style="font-size:15px">No contractor yet</div><div class="text-sm text-muted">Chat opens once a contractor is assigned.</div></div>`;
+  }
+  if(!msgs.length){
+    return`<div class="cempty"><div style="font-size:36px">💬</div><div class="fw7" style="font-size:15px">No messages yet</div><div class="text-sm text-muted">Send the first message below.</div></div>`;
+  }
+  return`<div class="chat" id="cmsg">
+    ${msgs.map(m=>{
+      const me=m.role===S.role;
+      return`<div class="mrow${me?' me':''}">
+        ${!me?`<div class="mav" style="background:${m.role==='hauler'?'var(--brand)':'#E0E8FA'};color:${m.role==='hauler'?'var(--ink)':'#3651B0'}">${m.role==='hauler'?'BB':'AM'}</div>`:''}
+        <div>
+          <div class="mb ${m.role}">${esc(m.text)}</div>
+          <div class="mts" style="text-align:${me?'right':'left'}">${ft(m.ts)}</div>
+        </div>
+        ${me?`<div class="mav" style="background:var(--ink);color:#E8F5E2">${m.role==='hauler'?'BB':'AM'}</div>`:''}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function chatInput(jid){
+  return`<div class="chat-in">
+    <textarea class="ci" id="ci-${jid}" placeholder="Message…" rows="1"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send('${jid}')}"
+      oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
+    <button class="csend" onclick="send('${jid}')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+        <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </div>`;
+}
+
+function tabReviews(job,revs){
+  const me=S.role,myRev=me==='customer'?revs.customer:revs.hauler,theirRev=me==='customer'?revs.hauler:revs.customer;
+  const can=job.status==='COMPLETED'&&!myRev;
+  const draft=S.revDraft[job.id]||{stars:5,note:''};
+  const target=me==='customer'?'the contractor':'the customer';
+  const theirLabel=me==='customer'?'From Contractor':'From Customer';
+
+  return`<div class="col gap3">
+    ${can?`
+    <div class="card col gap3">
+      <div class="fw7">Rate ${target}</div>
+      <div class="star-r" id="sr-${job.id}">${starHtml(draft.stars,false,job.id)}</div>
+      <textarea class="fi fi-ta" id="rn-${job.id}" placeholder="Optional note…">${esc(draft.note)}</textarea>
+      <button class="btn btn-brand" onclick="submitRev('${job.id}')">Submit Review</button>
+    </div>`:''}
+    ${myRev?`
+    <div class="card col gap2">
+      <div class="text-xs text-muted fw7" style="text-transform:uppercase;letter-spacing:.07em">Your Review</div>
+      <div class="star-r">${starHtml(myRev.stars,true)}</div>
+      ${myRev.note?`<div class="rev-note">"${esc(myRev.note)}"</div>`:''}
+      <div class="text-xs text-muted">${ft(myRev.ts)}</div>
+    </div>`:''}
+    ${theirRev?`
+    <div class="card col gap2">
+      <div class="text-xs text-muted fw7" style="text-transform:uppercase;letter-spacing:.07em">${theirLabel}</div>
+      <div class="star-r">${starHtml(theirRev.stars,true)}</div>
+      ${theirRev.note?`<div class="rev-note">"${esc(theirRev.note)}"</div>`:''}
+      <div class="text-xs text-muted">${ft(theirRev.ts)}</div>
+    </div>`:''}
+    ${!can&&!myRev&&!theirRev?`
+    <div class="empty">
+      <div class="empty-ic">⭐</div>
+      <div class="empty-t">No reviews yet</div>
+      <div class="empty-b">${job.status==='COMPLETED'?'Reviews appear here after submission.':'Reviews unlock when the job is completed.'}</div>
+    </div>`:''}
+  </div>`;
+}
+
+function viewPost(){
+  const s=S.postStep,d=S.postData;
+  const TYPES=['Furniture','Appliances','Mattresses','Yard Debris','General Junk','Full Cleanout','Electronics','Construction'];
+  return hdr({title:'Post a Job',back:"go('dash')"})+`
+  <div class="body">
+    <div class="step-dots">${[1,2,3].map(n=>`<div class="sd${s===n?' on':''}"></div>`).join('')}</div>
+    ${s===1?`
+    <div class="col gap3">
+      <div style="font-size:19px;font-weight:800;letter-spacing:-.02em">What needs to go?</div>
+      <div class="type-grid">${TYPES.map(t=>`<div class="ttog${d.types.includes(t)?' on':''}" onclick="toggleType('${t}')">${t}</div>`).join('')}</div>
+      <button class="btn btn-brand" onclick="nextStep()" ${!d.types.length?'disabled':''}>Continue →</button>
+    </div>`:''}
+    ${s===2?`
+    <div class="col gap3">
+      <div style="font-size:19px;font-weight:800;letter-spacing:-.02em">Where is it?</div>
+      <div class="fg"><label class="fl-lbl">Street Address</label><input class="fi" type="text" placeholder="1234 W Example St" value="${esc(d.addr)}" oninput="S.postData.addr=this.value"></div>
+      <div class="fg"><label class="fl-lbl">City, State</label><input class="fi" type="text" placeholder="Phoenix, AZ" value="${esc(d.city)}" oninput="S.postData.city=this.value"></div>
+      <div class="fg"><label class="fl-lbl">Access</label><select class="fi" onchange="S.postData.stories=this.value"><option value="0">Ground floor</option><option value="1" ${d.stories==='1'?'selected':''}>1 story up</option><option value="2" ${d.stories==='2'?'selected':''}>2 stories up</option></select></div>
+      <div class="row gap2"><button class="btn btn-brd flex1" onclick="S.postStep=1;render()">← Back</button><button class="btn btn-brand flex1" onclick="nextStep()">Continue →</button></div>
+    </div>`:''}
+    ${s===3?`
+    <div class="col gap3">
+      <div style="font-size:19px;font-weight:800;letter-spacing:-.02em">Any details?</div>
+      <div class="fg"><label class="fl-lbl">Notes for Contractors</label><textarea class="fi fi-ta" placeholder="Gate code, parking info, fragile items…" oninput="S.postData.note=this.value">${esc(d.note)}</textarea></div>
+      <div class="card2" style="border-style:dashed;text-align:center;padding:20px">
+        <div style="font-size:32px">📷</div>
+        <div class="fw7" style="margin-top:6px">Add before photo</div>
+        <div class="text-sm text-muted" style="margin-top:3px">Contractors quote 3× faster with photos</div>
+        <button class="btn btn-brd mt3" style="max-width:160px;margin:12px auto 0" onclick="alert('Camera available in full build!')">Take Photo</button>
+      </div>
+      <div class="card2" style="background:var(--brand-bg);border-color:var(--brand)">
+        <div class="text-sm fw7" style="color:var(--brand-dk)">${esc(d.types.join(', ')||'No types')} · ${esc(d.addr||'No address')} · ${d.stories==='0'?'Ground floor':d.stories+' floor up'}</div>
+      </div>
+      <div class="row gap2"><button class="btn btn-brd flex1" onclick="S.postStep=2;render()">← Back</button><button class="btn btn-brand flex1" onclick="postJob()">Post Job →</button></div>
+    </div>`:''}
+  </div>`+bnav()+demoStrip();
+}
+
+function viewAvail(){
+  return hdr({title:'Find Jobs',back:"go('dash')"})+`
+  <div class="body">
+    <div style="font-size:19px;font-weight:800;letter-spacing:-.02em">Jobs Near You</div>
+    <div class="text-sm text-muted">Phoenix metro · ${AVAIL.length} open</div>
+    <div class="col gap3">${AVAIL.map(availCard).join('')}</div>
+    ${JOBS.filter(j=>j.hauler).map(j=>`
+    <div class="sh" style="margin-top:4px">My Active Jobs</div>
+    <div class="col gap3">${JOBS.filter(j=>j.hauler&&j.status!=='COMPLETED').map(j=>jCard(j,'hauler')).join('')}</div>`)[0]||''}
+  </div>`+bnav()+demoStrip();
+}
+
+function viewProfile(){
+  const isH=S.role==='hauler';
+  return hdr({title:'Profile',back:"go('dash')"})+`
+  <div class="body">
+    <div class="col items-center gap2" style="padding:12px 0 4px">
+      <div style="width:72px;height:72px;background:var(--brand);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:var(--ink)">${isH?'BB':'AM'}</div>
+      <div style="font-size:20px;font-weight:800;letter-spacing:-.025em">${isH?"Bob's Big Haul":'Alice M.'}</div>
+      <div class="text-sm text-muted">${isH?'⭐ 4.9 · Verified Pro':'Customer since 2024'}</div>
+    </div>
+    <div class="stats">
+      ${isH?`<div class="stat"><div class="sv">47</div><div class="sl">Jobs</div></div><div class="stat"><div class="sv fnum">$3.8k</div><div class="sl">Earned</div></div><div class="stat"><div class="sv">4.9★</div><div class="sl">Rating</div></div>`
+           :`<div class="stat"><div class="sv">4</div><div class="sl">Jobs</div></div><div class="stat"><div class="sv fnum">$813</div><div class="sl">Spent</div></div><div class="stat"><div class="sv">5.0★</div><div class="sl">Rating</div></div>`}
+    </div>
+    <div class="card col gap3">
+      <div class="row between items-center"><div class="fw7">${isH?'Payout account':'Payment method'}</div><div class="text-sm text-muted">${isH?'Bank ✓':'•••• 4242'}</div></div>
+      <div class="divider"></div>
+      <div class="row between items-center"><div class="fw7">Notifications</div><div class="text-sm" style="color:var(--ok)">On</div></div>
+      ${isH?`<div class="divider"></div><div class="row between items-center"><div class="fw7">Insurance</div><div class="text-sm" style="color:var(--ok)">Verified ✓</div></div>`:'' }
+      <div class="divider"></div>
+      <div class="stripe-row" style="background:var(--s2);border-color:var(--border);color:var(--ink2)">
+        <div class="stripe-s">S</div>
+        Stripe Connect — integration pending
+        <button style="margin-left:auto;background:var(--brand);border:none;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif;color:var(--ink)" onclick="alert('Stripe Connect onboarding — plug in your Stripe keys to activate.')">Connect →</button>
+      </div>
+    </div>
+  </div>`+bnav()+demoStrip();
+}
+
+/* ── ACTIONS ─────────────────────────────────────────── */
+
+function go(v){S.view=v;S.jobId=null;S.jobTab='details';render()}
+function goChat(){
+  const j=JOBS.find(j=>getMsgs(j.id).length>0);
+  if(j){S.view='job';S.jobId=j.id;S.jobTab='chat';S.unread[j.id]=0;render();scrollChat()}
+}
+function openJob(id){S.view='job';S.jobId=id;S.jobTab='details';S.unread[id]=0;render()}
+function openAvail(id){S.view='job';S.jobId=id;S.jobTab='details';render()}
+function setTab(t){S.jobTab=t;if(t==='chat')S.unread[S.jobId]=0;render();if(t==='chat')setTimeout(scrollChat,50)}
+function switchRole(r){S.role=r;localStorage.setItem('jr_role',r);S.view='dash';S.jobId=null;render()}
+function toggleType(t){const a=S.postData.types,i=a.indexOf(t);i>-1?a.splice(i,1):a.push(t);render()}
+function nextStep(){S.postStep++;render()}
+function scrollChat(){const el=document.getElementById('cmsg');if(el)el.scrollIntoView({block:'end'})}
+
+function postJob(){
+  alert('Job posted! Contractors will start seeing your listing and sending estimates. (Full flow in production build)');
+  S.postStep=1;S.postData={types:[],addr:'',city:'Phoenix, AZ',stories:'1',note:''};
+  go('dash');
+}
+function acceptEst(eid,jid){alert('Estimate accepted! This triggers payment authorization and contractor notification. (Stripe integration pending)')}
+function submitBid(jid){
+  const inp=document.getElementById('aei-'+jid);
+  const v=inp?inp.value.trim():'';
+  if(!v){alert('Enter your quote amount first.');return}
+  alert(`Bid of ${v} sent to customer! They'll be notified immediately. (Full flow in production build)`);
+  if(inp)inp.value='';
+}
+
+function setStar(jid,n){
+  if(!S.revDraft[jid])S.revDraft[jid]={stars:5,note:''};
+  S.revDraft[jid].stars=n;
+  const row=document.getElementById('sr-'+jid);
+  if(row)row.innerHTML=starHtml(n,false,jid);
+}
+
+async function submitRev(jid){
+  const draft=S.revDraft[jid]||{stars:5,note:''};
+  const noteEl=document.getElementById('rn-'+jid);
+  if(noteEl)draft.note=noteEl.value;
+  const rev={stars:draft.stars,note:draft.note,ts:Date.now()};
+  if(!S.dbRevs[jid])S.dbRevs[jid]={customer:null,hauler:null};
+  if(S.role==='customer')S.dbRevs[jid].customer=rev;
+  else S.dbRevs[jid].hauler=rev;
+  if(S.dbRef){
+    try{
+      const cur=await S.dbRef.doc(`reviews/${jid}`).get()||{customer:null,hauler:null};
+      const up={...cur};
+      if(S.role==='customer')up.customer=rev;else up.hauler=rev;
+      await S.dbRef.doc(`reviews/${jid}`).set(up);
+    }catch(e){console.warn('db write:',e)}
+  }
+  delete S.revDraft[jid];
+  render();
+}
+
+async function send(jid){
+  const inp=document.getElementById('ci-'+jid);
+  if(!inp)return;
+  const text=inp.value.trim();
+  if(!text)return;
+  inp.value='';inp.style.height='auto';
+  const msg={id:'m'+Date.now(),role:S.role,text,ts:Date.now()};
+  if(!S.dbMsgs[jid]||!S.dbMsgs[jid].length){
+    S.dbMsgs[jid]=[...(SEED_MSGS[jid]||[])];
+  }
+  S.dbMsgs[jid].push(msg);
+  if(S.dbRef){
+    try{
+      const cur=await S.dbRef.doc(`messages/${jid}`).get();
+      const items=[...(cur?.items||SEED_MSGS[jid]||[]),msg];
+      await S.dbRef.doc(`messages/${jid}`).set({items});
+    }catch(e){console.warn('db write:',e)}
+  }
+  render();setTimeout(scrollChat,30);
+}
+
+/* ── RENDER ──────────────────────────────────────────── */
+
+function render(){
+  const app=document.getElementById('app');
+  let h='';
+  if(S.view==='dash')h=viewDash();
+  else if(S.view==='job')h=viewJob(S.jobId);
+  else if(S.view==='post')h=viewPost();
+  else if(S.view==='avail')h=viewAvail();
+  else if(S.view==='profile')h=viewProfile();
+  else h=viewDash();
+  app.innerHTML=h;
+}
+
+/* ── DB ──────────────────────────────────────────────── */
+
+async function initDb(){
+  try{
+    const db=await claude.use('db');
+    if(!db)return;
+    S.dbRef=db;
+    const ids=[...JOBS.map(j=>j.id),...AVAIL.map(j=>j.id)];
+    for(const id of ids){
+      db.doc(`messages/${id}`).onSnapshot(snap=>{
+        if(snap?.items){S.dbMsgs[id]=snap.items;if(S.view==='job'&&S.jobId===id&&S.jobTab==='chat'){render();setTimeout(scrollChat,30)}}
+      });
+      db.doc(`reviews/${id}`).onSnapshot(snap=>{
+        if(snap){S.dbRevs[id]=snap;if(S.view==='job'&&S.jobId===id&&S.jobTab==='reviews')render()}
+      });
+    }
+  }catch(e){console.log('DB offline, using local mode')}
+}
+
+render();
+initDb();
+</script>

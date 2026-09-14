@@ -1,0 +1,284 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// SQLite for easy local dev — swap to postgresql + DATABASE_URL for production.
+// NOTE: SQLite has no native enum support in Prisma, so status/type/role fields
+// below are plain Strings. Allowed values are documented above each field and
+// enforced in code via the unions in lib/constants.ts.
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Users & Roles
+// Role: CUSTOMER | HAULER | ADMIN | OWNER
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  clerkId   String   @unique
+  email     String   @unique
+  name      String?
+  phone     String?
+  role      String   @default("CUSTOMER")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ── Payment verification (must be true before a customer can post a job) ──
+  stripeCustomerId  String?
+  paymentMethodId   String? // default card on file
+  cardBrand         String?
+  cardLast4         String?
+  paymentVerified   Boolean   @default(false)
+  paymentVerifiedAt DateTime?
+
+  // ── Notifications ──────────────────────────────────────────────────────────
+  notificationsEnabled Boolean @default(true)
+
+  customerJobs      Job[]              @relation("CustomerJobs")
+  haulerProfile     HaulerProfile?
+  notifications     Notification[]
+  pushSubscriptions PushSubscription[]
+  reviewsGiven      Review[]           @relation("ReviewsGiven")
+  reviewsReceived   Review[]           @relation("CustomerReviews")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hauler (Contractor) Company Profile
+// ─────────────────────────────────────────────────────────────────────────────
+
+model HaulerProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  companyName    String  @default("New Contractor")
+  bio            String?
+  phone          String?
+  serviceArea    String? @default("Phoenix metro · 30 miles")
+  dotNumber      String?
+  logoUrl        String?
+  vehicleType    String? // "box_truck" | "pickup" | "trailer"
+  operatingHours String?
+
+  acceptingLoads       Boolean @default(true)
+  notificationsEnabled Boolean @default(true) // "turn off alerts" toggle for new HaulBoard jobs
+
+  // ── Verification ────────────────────────────────────────────────────────────
+  verified            Boolean   @default(false) // overall "Verified Pro" badge
+  insuranceDocUrl     String?
+  insuranceVerified   Boolean   @default(false)
+  insuranceUploadedAt DateTime?
+
+  // ── Stripe Connect (for payouts) ───────────────────────────────────────────
+  stripeAccountId      String?
+  stripeOnboardingDone Boolean @default(false)
+
+  // Aggregates (denormalized for speed)
+  rating   Float @default(5.0)
+  jobCount Int   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobs            Job[]
+  estimates       Estimate[]
+  declines        JobDecline[]
+  reviewsReceived Review[]       @relation("HaulerReviews")
+  weeklyPayouts   WeeklyPayout[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Job Status Machine
+// Status: POSTED → BIDDING → ASSIGNED → IN_PROGRESS → EVIDENCE_SUBMITTED
+//         → PENDING_PAYOUT (24h dispute window) → COMPLETED | DISPUTED → COMPLETED | REFUNDED
+//         CANCELLED at any point.
+// If not completed within 24h of the scheduled pickup, ASSIGNED/IN_PROGRESS jobs
+// auto-return to BIDDING and go back on the HaulBoard (see /api/cron/auto-return).
+//
+// PaymentStatus: PENDING | AUTHORIZED | CAPTURED | TRANSFERRED | REFUNDED | DISPUTED
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Job {
+  id        String @id @default(cuid())
+  jobNumber String @unique // human-readable e.g. JR-0041
+  status    String @default("POSTED")
+
+  // ── Parties ──────────────────────────────────────────────────────────────
+  customerId String
+  customer   User    @relation("CustomerJobs", fields: [customerId], references: [id])
+  haulerId   String?
+  hauler     HaulerProfile? @relation(fields: [haulerId], references: [id])
+
+  // ── Questionnaire ────────────────────────────────────────────────────────
+  jobTypes     String // JSON array string, values from JOB_TYPES: Furniture, Appliances, Construction Debris, Yard Waste, Mattresses, Electronics
+  whatToExpect String? // free text: parking, gate codes, stairs, hazards, etc.
+  numStories   Int     @default(1)
+
+  // ── Location & schedule ──────────────────────────────────────────────────
+  pickupAddress String
+  city          String
+  zipCode       String
+  arrivalType   String // "SET_TIME" | "ANYTIME"
+  date          String // yyyy-mm-dd
+  time          String? // hh:mm, null when arrivalType = ANYTIME
+  scheduledAt   DateTime // computed anchor used for the 24h auto-return rule
+
+  // ── Evidence checklist ────────────────────────────────────────────────────
+  // Before photo: captured by the CUSTOMER while posting the job (required).
+  // After photo: captured by the CONTRACTOR when the job is done. Once the
+  // after photo lands, the job enters the payout pipeline.
+  beforePhotoUrl String
+  afterPhotoUrl  String?
+
+  // ── Money (all integers in cents) ─────────────────────────────────────────
+  // priceCents is null until the customer accepts a contractor's estimate.
+  priceCents        Int?
+  platformFeeCents  Int @default(0) // JunkRun's 10% profit — tracked separately from hauler payout
+  haulerPayoutCents Int @default(0)
+
+  // ── Stripe ────────────────────────────────────────────────────────────────
+  stripePaymentIntentId String?
+  stripeTransferId      String?
+  paymentStatus         String @default("PENDING")
+
+  // ── Dispute ───────────────────────────────────────────────────────────────
+  disputeWindowEnd  DateTime?
+  disputeReason     String?
+  disputedAt        DateTime?
+  disputeResolvedAt DateTime?
+  disputeOutcome    String? // "released" | "refunded"
+
+  // ── Auto-return tracking ────────────────────────────────────────────────
+  autoReturnedCount Int @default(0)
+
+  // ── Timeline ──────────────────────────────────────────────────────────────
+  authorizedAt        DateTime?
+  acceptedAt          DateTime?
+  inProgressAt        DateTime?
+  evidenceSubmittedAt DateTime?
+  verifiedAt          DateTime?
+  completedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  estimates Estimate[]
+  declines  JobDecline[]
+  reviews   Review[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Estimates — contractors view the job photo + questionnaire and name a price.
+// Status: PENDING | ACCEPTED | DECLINED
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Estimate {
+  id          String        @id @default(cuid())
+  jobId       String
+  job         Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  haulerId    String
+  hauler      HaulerProfile @relation(fields: [haulerId], references: [id])
+  amountCents Int
+  arrival     String? // e.g. "Today 2-4pm" or "30 min after acceptance"
+  message     String?
+  status      String        @default("PENDING")
+  createdAt   DateTime      @default(now())
+
+  @@unique([jobId, haulerId])
+}
+
+// A contractor explicitly passing on a HaulBoard job (distinct from just not bidding).
+model JobDecline {
+  id        String        @id @default(cuid())
+  jobId     String
+  job       Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  haulerId  String
+  hauler    HaulerProfile @relation(fields: [haulerId], references: [id])
+  createdAt DateTime      @default(now())
+
+  @@unique([jobId, haulerId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reviews
+// targetType: "HAULER" | "CUSTOMER"
+// On the customer's own profile, reviews left by contractors are shown WITHOUT
+// attribution (no contractor name/company) — see app/(customer)/profile.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Review {
+  id       String         @id @default(cuid())
+  jobId    String
+  job      Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  targetType String // "HAULER" | "CUSTOMER"
+  haulerId   String?
+  hauler     HaulerProfile? @relation("HaulerReviews", fields: [haulerId], references: [id])
+  customerId String?
+  customer   User?          @relation("CustomerReviews", fields: [customerId], references: [id])
+
+  raterId   String
+  rater     User   @relation("ReviewsGiven", fields: [raterId], references: [id])
+  raterRole String // "CUSTOMER" | "HAULER"
+
+  stars     Int
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@unique([jobId, raterId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Push notifications (Web Push) + in-app notification center
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}
+
+// type: JOB_POSTED | ESTIMATE_RECEIVED | ESTIMATE_ACCEPTED | ESTIMATE_DECLINED |
+//       JOB_DECLINED | JOB_ASSIGNED | JOB_AUTO_RETURNED | JOB_COMPLETED |
+//       PAYOUT_RELEASED | DISPUTE | REVIEW | VERIFICATION
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  jobId     String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Weekly payout ledger — generated by /api/cron/weekly-payout-summary.
+// Lets us report hauler payouts AND platform profit (10% fee) as two
+// separate, auditable numbers, week over week.
+// ─────────────────────────────────────────────────────────────────────────────
+
+model WeeklyPayout {
+  id               String        @id @default(cuid())
+  haulerId         String
+  hauler           HaulerProfile @relation(fields: [haulerId], references: [id])
+  weekStart        DateTime
+  weekEnd          DateTime
+  jobCount         Int
+  grossCents       Int // sum of job priceCents completed that week
+  platformFeeCents Int // JunkRun's profit for the week
+  payoutCents      Int // hauler's net payout for the week
+  status           String        @default("PENDING") // PENDING | PAID
+  generatedAt      DateTime      @default(now())
+  paidAt           DateTime?
+
+  @@unique([haulerId, weekStart])
+}

@@ -1,0 +1,12 @@
+{
+  "name": "JunkRun",
+  "short_name": "JunkRun",
+  "description": "Post a junk removal job, get contractor quotes, track pickup to payout.",
+  "start_url": "/redirect",
+  "display": "standalone",
+  "background_color": "#F7FAF3",
+  "theme_color": "#10140C",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
