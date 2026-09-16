@@ -1,113 +1,53 @@
-/**
- * POST /api/jobs/[id]/accept
- * Customer accepts one contractor's estimate. Body: { estimateId }
- *
- * This is also where the payment hold happens: the customer's verified
- * payment method is charged as an authorization (manual capture — no money
- * moves yet) for the accepted amount. All other estimates on the job are
- * marked DECLINED and their contractors notified.
- */
 import { NextRequest, NextResponse } from 'next/server'
-import { stripe, splitPayment } from '@/lib/stripe'
+import { stripe, splitPayment, disputeWindowEnd } from '@/lib/stripe'
 import { db } from '@/lib/db'
 import { getOrCreateDbUser } from '@/lib/auth'
 import { notifyUser } from '@/lib/notify'
+import { z } from 'zod'
+
+const BodySchema = z.object({ estimateId: z.string().min(1) })
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const user = await getOrCreateDbUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const parsed = BodySchema.safeParse(await req.json())
+  if (!parsed.success) return NextResponse.json({ error: 'Invalid request' }, { status: 422 })
 
-  const { estimateId } = await req.json()
-  if (!estimateId) return NextResponse.json({ error: 'estimateId required' }, { status: 400 })
-
-  const job = await db.job.findFirst({ where: { id, customerId: user.id } })
-  if (!job) return NextResponse.json({ error: 'Job not found or not yours' }, { status: 404 })
-  if (!['POSTED', 'BIDDING'].includes(job.status)) {
-    return NextResponse.json({ error: 'Job is not open for estimates anymore' }, { status: 409 })
-  }
-
-  const estimate = await db.estimate.findFirst({ where: { id: estimateId, jobId: id }, include: { hauler: true } })
-  if (!estimate) return NextResponse.json({ error: 'Estimate not found' }, { status: 404 })
-
-  if (!user.stripeCustomerId || !user.paymentMethodId) {
-    return NextResponse.json({ error: 'Add a verified payment method before accepting an estimate' }, { status: 402 })
-  }
+  const estimate = await db.estimate.findFirst({ where: { id: parsed.data.estimateId, jobId: id, status: 'PENDING' }, include: { hauler: true } })
+  if (!estimate) return NextResponse.json({ error: 'Estimate not found or no longer available' }, { status: 404 })
+  if (!estimate.hauler.verified || !estimate.hauler.stripeAccountId) return NextResponse.json({ error: 'Contractor is not eligible for assignment' }, { status: 409 })
+  if (!user.stripeCustomerId || !user.paymentMethodId || !user.paymentVerified) return NextResponse.json({ error: 'Add a verified payment method before accepting an estimate' }, { status: 402 })
 
   const { platformFeeCents, haulerPayoutCents } = splitPayment(estimate.amountCents)
+  const now = new Date()
+  const locked = await db.job.updateMany({
+    where: { id, customerId: user.id, status: { in: ['POSTED', 'BIDDING'] } },
+    data: { status: 'ASSIGNING', haulerId: estimate.haulerId, priceCents: estimate.amountCents, platformFeeCents, haulerPayoutCents, acceptedAt: now },
+  })
+  if (locked.count !== 1) return NextResponse.json({ error: 'Job was already accepted or changed' }, { status: 409 })
 
-  let paymentIntentId: string
+  let intent: Awaited<ReturnType<typeof stripe.paymentIntents.create>>
   try {
-    const intent = await stripe.paymentIntents.create({
-      amount: estimate.amountCents,
-      currency: 'usd',
-      customer: user.stripeCustomerId,
-      payment_method: user.paymentMethodId,
-      off_session: true,
-      confirm: true,
-      capture_method: 'manual',
-      metadata: { jobId: job.id, jobNumber: job.jobNumber, estimateId: estimate.id },
-      description: `JunkRun job ${job.jobNumber} — ${job.pickupAddress}`,
-    })
-    paymentIntentId = intent.id
-  } catch (err: unknown) {
-    const message =
-      err && typeof err === 'object' && 'message' in err
-        ? String((err as { message: unknown }).message)
-        : 'Card authorization failed'
-    return NextResponse.json(
-      { error: `We couldn't place a hold on your card: ${message}. Update your payment method and try again.` },
-      { status: 402 }
-    )
+    intent = await stripe.paymentIntents.create({ amount: estimate.amountCents, currency: 'usd', customer: user.stripeCustomerId, payment_method: user.paymentMethodId, off_session: true, confirm: true, capture_method: 'manual', metadata: { jobId: id, jobNumber: (await db.job.findUniqueOrThrow({ where: { id }, select: { jobNumber: true } })).jobNumber, estimateId: estimate.id }, description: `JunkRun job ${id}` }, { idempotencyKey: `job-authorization:${id}:${estimate.id}` })
+  } catch (err) {
+    await db.job.updateMany({ where: { id, status: 'ASSIGNING' }, data: { status: 'POSTED', haulerId: null, priceCents: null, platformFeeCents: 0, haulerPayoutCents: 0, acceptedAt: null } })
+    console.error('Stripe authorization failed', err)
+    return NextResponse.json({ error: "We couldn't authorize the payment method. Please update it and try again." }, { status: 402 })
   }
 
-  const [updatedJob] = await db.$transaction([
-    db.job.update({
-      where: { id },
-      data: {
-        status: 'ASSIGNED',
-        haulerId: estimate.haulerId,
-        priceCents: estimate.amountCents,
-        platformFeeCents,
-        haulerPayoutCents,
-        stripePaymentIntentId: paymentIntentId,
-        paymentStatus: 'AUTHORIZED',
-        authorizedAt: new Date(),
-        acceptedAt: new Date(),
-      },
-    }),
-    db.estimate.update({ where: { id: estimate.id }, data: { status: 'ACCEPTED' } }),
-    db.estimate.updateMany({
-      where: { jobId: id, id: { not: estimate.id } },
-      data: { status: 'DECLINED' },
-    }),
-  ])
-
-  await notifyUser({
-    userId: estimate.hauler.userId,
-    type: 'JOB_ASSIGNED',
-    title: 'Your estimate was accepted!',
-    body: `You're assigned to ${job.jobNumber}. Check the job for pickup details.`,
-    jobId: job.id,
-    url: `/hauler/jobs/${job.id}`,
+  const updated = await db.$transaction(async (tx) => {
+    const job = await tx.job.update({ where: { id, status: 'ASSIGNING' }, data: { status: 'ASSIGNED', stripePaymentIntentId: intent.id, paymentStatus: 'AUTHORIZED', authorizedAt: now, disputeWindowEnd: disputeWindowEnd() } })
+    await tx.estimate.update({ where: { id: estimate.id }, data: { status: 'ACCEPTED' } })
+    await tx.estimate.updateMany({ where: { jobId: id, id: { not: estimate.id } }, data: { status: 'DECLINED' } })
+    await tx.auditLog.create({ data: { actorUserId: user.id, action: 'JOB_ACCEPTED', entityType: 'JOB', entityId: id, jobId: id, metadata: JSON.stringify({ estimateId: estimate.id, amountCents: estimate.amountCents }) } })
+    return job
+  }).catch(async (err) => {
+    await stripe.paymentIntents.cancel(intent.id).catch((cancelErr) => console.error('Failed to cancel orphan authorization', cancelErr))
+    await db.job.updateMany({ where: { id, status: 'ASSIGNING' }, data: { status: 'POSTED', haulerId: null, priceCents: null, platformFeeCents: 0, haulerPayoutCents: 0, acceptedAt: null } })
+    throw err
   })
 
-  const otherEstimates = await db.estimate.findMany({
-    where: { jobId: id, id: { not: estimate.id } },
-    include: { hauler: true },
-  })
-  await Promise.all(
-    otherEstimates.map((e) =>
-      notifyUser({
-        userId: e.hauler.userId,
-        type: 'ESTIMATE_DECLINED',
-        title: 'Job went to another contractor',
-        body: `The customer picked a different estimate for ${job.jobNumber}.`,
-        jobId: job.id,
-        url: `/hauler/loads`,
-      })
-    )
-  )
-
-  return NextResponse.json(updatedJob)
+  await notifyUser({ userId: estimate.hauler.userId, type: 'JOB_ASSIGNED', title: 'Your estimate was accepted!', body: `You're assigned to this JunkRun job.`, jobId: id, url: `/hauler/jobs/${id}` })
+  return NextResponse.json(updated)
 }
