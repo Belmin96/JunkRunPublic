@@ -1,51 +1,26 @@
-/**
- * POST /api/jobs/[id]/complete
- * Body: { afterPhotoUrl }
- * Contractor captures the after photo and marks the job done. That's the
- * evidence checklist in full: before (customer, at posting) + after
- * (contractor, here) → job enters the 24h dispute window → payment released.
- */
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getOrCreateDbUser } from '@/lib/auth'
 import { disputeWindowEnd } from '@/lib/stripe'
 import { notifyUser } from '@/lib/notify'
+import { z } from 'zod'
+
+const BodySchema = z.object({ afterPhotoUrl: z.string().url().max(2048), completionNonce: z.string().regex(/^[a-f0-9]{48}$/) })
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const user = await getOrCreateDbUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const { afterPhotoUrl } = await req.json()
-  if (!afterPhotoUrl) return NextResponse.json({ error: 'An after photo is required to complete the job' }, { status: 400 })
-
-  const haulerProfile = await db.haulerProfile.findUnique({ where: { userId: user.id } })
-  if (!haulerProfile) return NextResponse.json({ error: 'Contractor profile not found' }, { status: 404 })
-
-  const job = await db.job.findFirst({ where: { id, haulerId: haulerProfile.id, status: 'IN_PROGRESS' } })
-  if (!job) return NextResponse.json({ error: 'Job not found or not in progress' }, { status: 404 })
-
-  const windowEnd = disputeWindowEnd()
-
-  const updated = await db.job.update({
-    where: { id },
-    data: {
-      afterPhotoUrl,
-      status: 'PENDING_PAYOUT',
-      evidenceSubmittedAt: new Date(),
-      verifiedAt: new Date(),
-      disputeWindowEnd: windowEnd,
-    },
-  })
-
-  await notifyUser({
-    userId: job.customerId,
-    type: 'JOB_COMPLETED',
-    title: 'Your job is done!',
-    body: `${job.jobNumber} was completed. Review the after photo — you have 24h to flag an issue before payment releases.`,
-    jobId: job.id,
-    url: `/customer/jobs/${job.id}`,
-  })
-
-  return NextResponse.json(updated)
+  const parsed = BodySchema.safeParse(await req.json())
+  if (!parsed.success) return NextResponse.json({ error: 'A valid after photo and completion session are required' }, { status: 422 })
+  const hauler = await db.haulerProfile.findUnique({ where: { userId: user.id } })
+  if (!hauler) return NextResponse.json({ error: 'Contractor profile not found' }, { status: 404 })
+  const job = await db.job.findFirst({ where: { id, haulerId: hauler.id, status: 'IN_PROGRESS', completionNonce: parsed.data.completionNonce } })
+  if (!job || !job.completionStartedAt || Date.now() - job.completionStartedAt.getTime() > 10 * 60 * 1000) return NextResponse.json({ error: 'Completion session expired. Start again at the job site.' }, { status: 409 })
+  const now = new Date()
+  const updated = await db.job.updateMany({ where: { id, status: 'IN_PROGRESS', completionNonce: parsed.data.completionNonce }, data: { afterPhotoUrl: parsed.data.afterPhotoUrl, completionNonce: null, completionStartedAt: null, status: 'PENDING_PAYOUT', evidenceSubmittedAt: now, verifiedAt: now, disputeWindowEnd: disputeWindowEnd() } })
+  if (updated.count !== 1) return NextResponse.json({ error: 'Job completion was already submitted' }, { status: 409 })
+  await db.auditLog.create({ data: { actorUserId: user.id, action: 'JOB_EVIDENCE_SUBMITTED', entityType: 'JOB', entityId: id, jobId: id, metadata: JSON.stringify({ photoUrl: parsed.data.afterPhotoUrl }) } })
+  await notifyUser({ userId: job.customerId, type: 'JOB_COMPLETED', title: 'Your job is done!', body: `${job.jobNumber} was completed. Review the after photo within the dispute window.`, jobId: job.id, url: `/customer/jobs/${job.id}` })
+  return NextResponse.json({ success: true })
 }
