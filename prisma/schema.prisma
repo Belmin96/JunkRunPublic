@@ -2,117 +2,114 @@ generator client {
   provider = "prisma-client-js"
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
+datasource db { provider = "postgresql" url = env("DATABASE_URL") }
 
 model User {
-  id        String   @id @default(cuid())
-  clerkId   String   @unique
-  email     String   @unique
-  name      String?
-  phone     String?
-  role      String   @default("CUSTOMER")
+  id String @id @default(cuid())
+  clerkId String @unique
+  email String @unique
+  name String?
+  phone String?
+  role String @default("CUSTOMER")
+  contractorType String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  contractorType String?
-  stripeCustomerId  String?
-  paymentMethodId   String?
-  cardBrand         String?
-  cardLast4         String?
-  paymentVerified   Boolean   @default(false)
+  stripeCustomerId String?
+  paymentMethodId String?
+  cardBrand String?
+  cardLast4 String?
+  paymentVerified Boolean @default(false)
   paymentVerifiedAt DateTime?
   notificationsEnabled Boolean @default(true)
-  customerJobs      Job[]              @relation("CustomerJobs")
-  haulerProfile     HaulerProfile?
-  notifications     Notification[]
+  customerJobs Job[] @relation("CustomerJobs")
+  haulerProfile HaulerProfile?
+  notifications Notification[]
   pushSubscriptions PushSubscription[]
-  reviewsGiven      Review[]           @relation("ReviewsGiven")
-  reviewsReceived   Review[]           @relation("CustomerReviews")
-  messagesSent      Message[]          @relation("MessagesSent")
-  auditLogs         AuditLog[]
+  reviewsGiven Review[] @relation("ReviewsGiven")
+  reviewsReceived Review[] @relation("CustomerReviews")
+  messagesSent Message[] @relation("MessagesSent")
+  auditLogs AuditLog[]
   @@index([role])
   @@index([createdAt])
 }
 
 model HaulerProfile {
-  id     String @id @default(cuid())
+  id String @id @default(cuid())
   userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  companyName    String  @default("New Contractor")
-  bio            String?
-  phone          String?
-  serviceArea    String? @default("Phoenix metro · 30 miles")
-  dotNumber      String?
-  logoUrl        String?
-  vehicleType    String?
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName String @default("New Contractor")
+  bio String?
+  phone String?
+  serviceArea String? @default("Phoenix metro · 30 miles")
+  dotNumber String?
+  logoUrl String?
+  vehicleType String?
   operatingHours String?
-  acceptingLoads       Boolean @default(true)
+  acceptingLoads Boolean @default(true)
   notificationsEnabled Boolean @default(true)
-  verified            Boolean   @default(false)
-  insuranceDocUrl     String?
-  insuranceVerified   Boolean   @default(false)
+  verified Boolean @default(false)
+  insuranceDocUrl String?
+  insuranceVerified Boolean @default(false)
   insuranceUploadedAt DateTime?
-  stripeAccountId      String?
+  stripeAccountId String?
   stripeOnboardingDone Boolean @default(false)
-  rating   Float @default(5.0)
-  jobCount Int   @default(0)
+  rating Float @default(5.0)
+  jobCount Int @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  jobs            Job[]
-  estimates       Estimate[]
-  declines        JobDecline[]
-  reviewsReceived Review[]       @relation("HaulerReviews")
-  weeklyPayouts   WeeklyPayout[]
+  jobs Job[]
+  estimates Estimate[]
+  declines JobDecline[]
+  reviewsReceived Review[] @relation("HaulerReviews")
+  weeklyPayouts WeeklyPayout[]
   @@index([acceptingLoads])
   @@index([verified])
 }
 
 model Job {
-  id        String @id @default(cuid())
+  id String @id @default(cuid())
   jobNumber String @unique
-  status    String @default("POSTED")
+  status String @default("POSTED")
   customerId String
-  customer   User    @relation("CustomerJobs", fields: [customerId], references: [id])
-  haulerId   String?
-  hauler     HaulerProfile? @relation(fields: [haulerId], references: [id])
-  jobTypes     String
+  customer User @relation("CustomerJobs", fields: [customerId], references: [id])
+  haulerId String?
+  hauler HaulerProfile? @relation(fields: [haulerId], references: [id])
+  jobTypes String
   whatToExpect String?
-  numStories   Int     @default(1)
+  numStories Int @default(1)
   pickupAddress String
-  city          String
-  zipCode       String
-  arrivalType   String
-  date          String
-  time          String?
-  scheduledAt   DateTime
+  city String
+  zipCode String
+  arrivalType String
+  date String
+  time String?
+  scheduledAt DateTime
   beforePhotoUrl String
-  afterPhotoUrl  String?
-  priceCents        Int?
-  platformFeeCents  Int @default(0)
+  afterPhotoUrl String?
+  priceCents Int?
+  platformFeeCents Int @default(0)
   haulerPayoutCents Int @default(0)
   stripePaymentIntentId String?
-  stripeTransferId      String?
-  paymentStatus         String @default("PENDING")
-  disputeWindowEnd  DateTime?
-  disputeReason     String?
-  disputedAt        DateTime?
+  stripeTransferId String?
+  paymentStatus String @default("PENDING")
+  disputeWindowEnd DateTime?
+  disputeReason String?
+  disputedAt DateTime?
   disputeResolvedAt DateTime?
-  disputeOutcome    String?
+  disputeOutcome String?
   autoReturnedCount Int @default(0)
-  authorizedAt        DateTime?
-  acceptedAt          DateTime?
-  inProgressAt        DateTime?
+  authorizedAt DateTime?
+  acceptedAt DateTime?
+  inProgressAt DateTime?
   evidenceSubmittedAt DateTime?
-  verifiedAt          DateTime?
-  completedAt         DateTime?
+  verifiedAt DateTime?
+  completedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   estimates Estimate[]
-  declines  JobDecline[]
-  reviews   Review[]
-  messages  Message[]
+  declines JobDecline[]
+  reviews Review[]
+  messages Message[]
   auditLogs AuditLog[]
   @@index([customerId, createdAt])
   @@index([haulerId, updatedAt])
@@ -122,46 +119,46 @@ model Job {
 }
 
 model Estimate {
-  id          String        @id @default(cuid())
-  jobId       String
-  job         Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  haulerId    String
-  hauler      HaulerProfile @relation(fields: [haulerId], references: [id])
+  id String @id @default(cuid())
+  jobId String
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  haulerId String
+  hauler HaulerProfile @relation(fields: [haulerId], references: [id])
   amountCents Int
-  arrival     String?
-  message     String?
-  status      String        @default("PENDING")
-  createdAt   DateTime      @default(now())
+  arrival String?
+  message String?
+  status String @default("PENDING")
+  createdAt DateTime @default(now())
   @@unique([jobId, haulerId])
   @@index([jobId, status])
   @@index([haulerId, status])
 }
 
 model JobDecline {
-  id        String        @id @default(cuid())
-  jobId     String
-  job       Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  haulerId  String
-  hauler    HaulerProfile @relation(fields: [haulerId], references: [id])
-  createdAt DateTime      @default(now())
+  id String @id @default(cuid())
+  jobId String
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  haulerId String
+  hauler HaulerProfile @relation(fields: [haulerId], references: [id])
+  createdAt DateTime @default(now())
   @@unique([jobId, haulerId])
   @@index([haulerId, createdAt])
 }
 
 model Review {
-  id       String         @id @default(cuid())
-  jobId    String
-  job      Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  id String @id @default(cuid())
+  jobId String
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
   targetType String
-  haulerId   String?
-  hauler     HaulerProfile? @relation("HaulerReviews", fields: [haulerId], references: [id])
+  haulerId String?
+  hauler HaulerProfile? @relation("HaulerReviews", fields: [haulerId], references: [id])
   customerId String?
-  customer   User?          @relation("CustomerReviews", fields: [customerId], references: [id])
-  raterId   String
-  rater     User   @relation("ReviewsGiven", fields: [raterId], references: [id])
+  customer User? @relation("CustomerReviews", fields: [customerId], references: [id])
+  raterId String
+  rater User @relation("ReviewsGiven", fields: [raterId], references: [id])
   raterRole String
-  stars     Int
-  note      String?
+  stars Int
+  note String?
   createdAt DateTime @default(now())
   @@unique([jobId, raterId])
   @@index([haulerId, createdAt])
@@ -169,71 +166,78 @@ model Review {
 }
 
 model PushSubscription {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  endpoint  String   @unique
-  p256dh    String
-  auth      String
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint String @unique
+  p256dh String
+  auth String
   createdAt DateTime @default(now())
 }
 
 model Notification {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  title     String
-  body      String
-  jobId     String?
-  read      Boolean  @default(false)
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type String
+  title String
+  body String
+  jobId String?
+  read Boolean @default(false)
   createdAt DateTime @default(now())
   @@index([userId, read, createdAt])
   @@index([jobId])
 }
 
 model Message {
-  id         String   @id @default(cuid())
-  jobId      String
-  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  senderId   String
-  sender     User     @relation("MessagesSent", fields: [senderId], references: [id])
+  id String @id @default(cuid())
+  jobId String
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  senderId String
+  sender User @relation("MessagesSent", fields: [senderId], references: [id])
   senderRole String
-  text       String
-  createdAt  DateTime @default(now())
+  text String
+  createdAt DateTime @default(now())
   @@index([jobId, createdAt])
   @@index([senderId, createdAt])
 }
 
 model WeeklyPayout {
-  id               String        @id @default(cuid())
-  haulerId         String
-  hauler           HaulerProfile @relation(fields: [haulerId], references: [id])
-  weekStart        DateTime
-  weekEnd          DateTime
-  jobCount         Int
-  grossCents       Int
+  id String @id @default(cuid())
+  haulerId String
+  hauler HaulerProfile @relation(fields: [haulerId], references: [id])
+  weekStart DateTime
+  weekEnd DateTime
+  jobCount Int
+  grossCents Int
   platformFeeCents Int
-  payoutCents      Int
-  status           String        @default("PENDING")
-  generatedAt      DateTime      @default(now())
-  paidAt           DateTime?
+  payoutCents Int
+  status String @default("PENDING")
+  generatedAt DateTime @default(now())
+  paidAt DateTime?
   @@unique([haulerId, weekStart])
   @@index([weekStart, status])
 }
 
 model AuditLog {
-  id          String   @id @default(cuid())
+  id String @id @default(cuid())
   actorUserId String?
-  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
-  action      String
-  entityType  String
-  entityId    String?
-  metadata    String?
-  createdAt   DateTime @default(now())
-  jobId       String?
-  job         Job?     @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  action String
+  entityType String
+  entityId String?
+  metadata String?
+  createdAt DateTime @default(now())
+  jobId String?
+  job Job? @relation(fields: [jobId], references: [id], onDelete: SetNull)
   @@index([actorUserId, createdAt])
   @@index([entityType, entityId, createdAt])
   @@index([jobId, createdAt])
+}
+
+model StripeEvent {
+  id String @id
+  type String
+  processedAt DateTime @default(now())
+  @@index([type, processedAt])
 }
