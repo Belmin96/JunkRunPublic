@@ -24,6 +24,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (estimate.job.customerId !== user.id) return NextResponse.json({ error: 'Only the customer who posted the job can approve an estimate' }, { status: 403 })
   if (estimate.job.status !== 'POSTED') return NextResponse.json({ error: 'Job is no longer accepting estimate approvals' }, { status: 409 })
   if (!estimate.hauler.verified || !estimate.hauler.stripeAccountId) return NextResponse.json({ error: 'Contractor is not eligible for assignment' }, { status: 409 })
+
+  // Do not trust only the database flag. Confirm the connected account is
+  // actually enabled for payouts before authorizing the customer's payment.
+  try {
+    const connectedAccount = await stripe.accounts.retrieve(estimate.hauler.stripeAccountId)
+    if (!connectedAccount.details_submitted || !connectedAccount.payouts_enabled) {
+      return NextResponse.json({ error: 'Contractor has not completed Stripe payout onboarding' }, { status: 409 })
+    }
+    if (!estimate.hauler.stripeOnboardingDone) {
+      await db.haulerProfile.updateMany({
+        where: { id: estimate.hauler.id, stripeAccountId: estimate.hauler.stripeAccountId },
+        data: { stripeOnboardingDone: true },
+      })
+    }
+  } catch (error) {
+    console.error('Stripe Connect account verification failed', error)
+    return NextResponse.json({ error: 'Unable to verify contractor payout setup' }, { status: 502 })
+  }
   if (!user.stripeCustomerId || !user.paymentMethodId || !user.paymentVerified) return NextResponse.json({ error: 'Add a verified payment method before accepting an estimate' }, { status: 402 })
 
   const { platformFeeCents, haulerPayoutCents } = splitPayment(estimate.amountCents)
