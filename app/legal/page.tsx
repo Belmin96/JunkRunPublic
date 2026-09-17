@@ -8,6 +8,7 @@ const policies = [
   ['Prohibited & Hazardous Materials', '/legal/prohibited-materials'],
   ['Cancellation & Refund Policy', '/legal/cancellation-refund'],
   ['Dispute & Evidence Policy', '/legal/disputes'],
+  ['Safety & Insurance', '/legal/safety-insurance'],
 ] as const
 
 export default function LegalIndexPage() {
