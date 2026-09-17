@@ -8,9 +8,12 @@ import { getOrCreateDbUser } from '@/lib/auth'
 import { notifyUser } from '@/lib/notify'
 import { z } from 'zod'
 
+const ArrivalSchema = z.enum(['SET_TIME', 'ANYTIME'])
+
 const EstimateSchema = z.object({
   amountCents: z.number().int().min(2500),
-  arrival: z.string().trim().max(200).optional(),
+  // Arrival is a controlled scheduling choice, not free-form text.
+  arrival: ArrivalSchema,
   message: z.string().trim().max(2000).optional(),
 })
 
@@ -59,7 +62,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const haulerProfile = await db.haulerProfile.findUnique({ where: { userId: user.id }, select: { id: true, companyName: true } })
   if (!haulerProfile) return NextResponse.json({ error: 'Contractor profile not found' }, { status: 404 })
 
-  const job = await db.job.findUnique({ where: { id }, select: { id: true, customerId: true, status: true } })
+  const job = await db.job.findUnique({ where: { id }, select: { id: true, customerId: true, status: true, arrivalType: true } })
   if (!job) return NextResponse.json({ error: 'Job not found' }, { status: 404 })
   if (job.status !== 'POSTED') return NextResponse.json({ error: 'Job is no longer accepting estimates' }, { status: 409 })
 
@@ -69,10 +72,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const parsed = EstimateSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 })
 
+  // Contractors must honor the customer's selected arrival mode; they cannot
+  // change a timed pickup into an anytime pickup or vice versa.
+  if (parsed.data.arrival !== job.arrivalType) {
+    return NextResponse.json({ error: `Arrival must be ${job.arrivalType}` }, { status: 422 })
+  }
+
   const estimate = await db.estimate.upsert({
     where: { jobId_haulerId: { jobId: id, haulerId: haulerProfile.id } },
-    update: { amountCents: parsed.data.amountCents, message: parsed.data.message ?? null, arrival: parsed.data.arrival ?? null, status: 'PENDING' },
-    create: { jobId: id, haulerId: haulerProfile.id, amountCents: parsed.data.amountCents, message: parsed.data.message ?? null, arrival: parsed.data.arrival ?? null },
+    update: { amountCents: parsed.data.amountCents, message: parsed.data.message ?? null, arrival: parsed.data.arrival, status: 'PENDING' },
+    create: { jobId: id, haulerId: haulerProfile.id, amountCents: parsed.data.amountCents, message: parsed.data.message ?? null, arrival: parsed.data.arrival },
     select: ESTIMATE_SELECT,
   })
 
