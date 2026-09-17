@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getOrCreateDbUser } from '@/lib/auth'
 import { notifyUser } from '@/lib/notify'
+import { hasAcceptedLegal, CUSTOMER_LEGAL } from '@/lib/legal'
 
 const REASONS = ['INCOMPLETE_WORK', 'PROPERTY_DAMAGE', 'WRONG_SERVICE', 'SAFETY_ISSUE', 'OTHER'] as const
 const MAX_REASON_LENGTH = 500
@@ -11,6 +12,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const user = await getOrCreateDbUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (user.role !== 'CUSTOMER') return NextResponse.json({ error: 'Only customers can open a customer dispute' }, { status: 403 })
+  if (!(await hasAcceptedLegal(user.id, CUSTOMER_LEGAL))) return NextResponse.json({ error: 'Legal acceptance is required before opening a dispute', code: 'LEGAL_ACCEPTANCE_REQUIRED' }, { status: 428 })
 
   let body: unknown
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
@@ -23,9 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const job = await db.job.findUnique({ where: { id }, include: { hauler: true } })
   if (!job || job.customerId !== user.id) return NextResponse.json({ error: 'Job not found' }, { status: 404 })
-  if (!['PENDING_PAYOUT', 'COMPLETED'].includes(job.status)) return NextResponse.json({ error: 'This job is not currently eligible for a customer dispute' }, { status: 409 })
-  if (job.status === 'COMPLETED') return NextResponse.json({ error: 'The job has already been finalized. Contact support if you believe an exception applies.' }, { status: 409 })
-
+  if (job.status !== 'PENDING_PAYOUT') return NextResponse.json({ error: 'This job is not currently eligible for a customer dispute' }, { status: 409 })
   const now = new Date()
   if (job.disputeWindowEnd && now > job.disputeWindowEnd) return NextResponse.json({ error: 'The dispute window has expired' }, { status: 409 })
 
