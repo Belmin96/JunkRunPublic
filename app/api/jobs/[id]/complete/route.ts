@@ -37,21 +37,52 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!job || !job.completionStartedAt || Date.now() - job.completionStartedAt.getTime() > 10 * 60 * 1000) return NextResponse.json({ error: 'Completion session expired. Start again at the job site.' }, { status: 409 })
   if (job.pickupDeadlineAt && now >= job.pickupDeadlineAt) return NextResponse.json({ error: 'The 45-minute pickup window has expired. The job must be returned to the HaulBoard.' }, { status: 409 })
 
-  const updated = await db.job.updateMany({
-    where: { id, haulerId: hauler.id, status: 'IN_PROGRESS', completionNonce: parsed.data.completionNonce, pickupDeadlineAt: { gt: now } },
-    data: {
-      afterPhotoUrl: parsed.data.afterPhotoUrl,
-      completionNonce: null,
-      completionStartedAt: null,
-      status: 'PENDING_PAYOUT',
-      evidenceSubmittedAt: now,
-      verifiedAt: now,
-      disputeWindowEnd: disputeWindowEnd(),
-    },
-  })
-  if (updated.count !== 1) return NextResponse.json({ error: 'Job completion was already submitted or the pickup window expired' }, { status: 409 })
+  const result = await db.$transaction(async (tx) => {
+    const updated = await tx.job.updateMany({
+      where: { id, haulerId: hauler.id, status: 'IN_PROGRESS', completionNonce: parsed.data.completionNonce, pickupDeadlineAt: { gt: now } },
+      data: {
+        afterPhotoUrl: parsed.data.afterPhotoUrl,
+        completionNonce: null,
+        completionStartedAt: null,
+        status: 'PENDING_PAYOUT',
+        evidenceSubmittedAt: now,
+        verifiedAt: now,
+        disputeWindowEnd: disputeWindowEnd(),
+      },
+    })
+    if (updated.count !== 1) return null
 
-  await db.auditLog.create({ data: { actorUserId: user.id, action: 'JOB_EVIDENCE_SUBMITTED', entityType: 'JOB', entityId: id, jobId: id, metadata: JSON.stringify({ capturedAt: capturedAt.toISOString(), captureLatitude: parsed.data.captureLatitude ?? null, captureLongitude: parsed.data.captureLongitude ?? null, captureAccuracyMeters: parsed.data.captureAccuracyMeters ?? null, cameraCapture: true }) } })
+    const photo = await tx.jobPhoto.create({
+      data: {
+        jobId: id,
+        userId: user.id,
+        kind: 'AFTER_CONTRACTOR',
+        photoUrl: parsed.data.afterPhotoUrl,
+        capturedAt,
+        latitude: parsed.data.captureLatitude,
+        longitude: parsed.data.captureLongitude,
+        accuracyMeters: parsed.data.captureAccuracyMeters ?? null,
+        captureSource: 'LIVE_CAMERA_WEB',
+        completionNonce: parsed.data.completionNonce,
+      },
+    })
+
+    await tx.auditLog.create({
+      data: {
+        actorUserId: user.id,
+        action: 'JOB_EVIDENCE_SUBMITTED',
+        entityType: 'JOB',
+        entityId: id,
+        jobId: id,
+        metadata: JSON.stringify({ jobPhotoId: photo.id, capturedAt: capturedAt.toISOString(), captureLatitude: parsed.data.captureLatitude ?? null, captureLongitude: parsed.data.captureLongitude ?? null, captureAccuracyMeters: parsed.data.captureAccuracyMeters ?? null, cameraCapture: true, captureSource: 'LIVE_CAMERA_WEB' }),
+      },
+    })
+
+    return photo
+  })
+
+  if (!result) return NextResponse.json({ error: 'Job completion was already submitted or the pickup window expired' }, { status: 409 })
+
   await notifyUser({ userId: job.customerId, type: 'JOB_COMPLETED', title: 'Your job is done!', body: `${job.jobNumber} was completed. Review the after photo within the dispute window.`, jobId: job.id, url: `/customer/jobs/${job.id}` })
-  return NextResponse.json({ success: true })
+  return NextResponse.json({ success: true, evidenceId: result.id })
 }
