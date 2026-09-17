@@ -39,8 +39,6 @@ const QuestionnaireSchema = z.object({
 
 const CreateJobSchema = z.object({ jobTypes: z.array(z.enum(JOB_TYPES)).min(1).max(20), questionnaire: QuestionnaireSchema, whatToExpect: z.string().trim().max(2000).optional(), numStories: z.number().int().min(1).max(10), pickupAddress: z.string().trim().min(5).max(300), city: z.string().trim().min(2).max(100), zipCode: z.string().trim().regex(/^\d{5}(?:-\d{4})?$/), arrivalType: z.enum(['SET_TIME', 'ANYTIME']), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), time: z.string().regex(/^\d{2}:\d{2}$/).optional(), timezone: z.string().trim().min(1).max(100).optional(), scheduledAtIso: z.string().datetime({ offset: true }).optional(), pickupLatitude: z.number().min(-90).max(90).optional(), pickupLongitude: z.number().min(-180).max(180).optional(), beforePhotoUrl: z.string().url().max(2048) })
 
-// Public-facing job numbers must not be predictable. Use 80 bits of randomness
-// and rely on the database's unique constraint as the final collision guard.
 function newJobNumber() {
   return `JR-${randomBytes(10).toString('hex').toUpperCase()}`
 }
@@ -93,7 +91,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(jobs)
     }
     const jobs = await db.job.findMany({
-      where: { status: { in: ['POSTED', 'BIDDING'] }, NOT: { exclusions: { some: { haulerId: profile.id } } } },
+      // JunkRun uses ESTIMATES, not bidding. Only genuinely open POSTED jobs belong on the contractor board.
+      where: { status: 'POSTED', NOT: { exclusions: { some: { haulerId: profile.id } } } },
       orderBy: { createdAt: 'desc' }, take: 100,
       select: {
         id: true, jobNumber: true, status: true, jobTypes: true, questionnaire: true, whatToExpect: true, numStories: true,
@@ -119,8 +118,6 @@ export async function POST(req: NextRequest) {
   if (Number.isNaN(scheduledAt.getTime())) return NextResponse.json({ error: 'Invalid pickup date/time' }, { status: 422 })
   if (data.arrivalType === 'SET_TIME' && scheduledAt.getTime() <= Date.now()) return NextResponse.json({ error: 'Pickup time must be in the future' }, { status: 422 })
 
-  // The UNIQUE constraint on Job.jobNumber is the authoritative collision guard.
-  // Retry only on a jobNumber collision; never retry unrelated database failures.
   let job
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
