@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { getOrCreateDbUser } from '@/lib/auth'
 import { notifyUser } from '@/lib/notify'
 import { distanceMeters, isWithinArrivalGeofence } from '@/lib/pickup'
-import { ARRIVAL_GEOFENCE_METERS } from '@/lib/constants'
+import { ARRIVAL_GEOFENCE_METERS, PICKUP_REMINDER_MINUTES } from '@/lib/constants'
 import { z } from 'zod'
 
 const ArrivalSchema = z.object({ latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180), accuracyMeters: z.number().min(0).max(10000) })
@@ -26,10 +26,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (job.pickupLatitude == null || job.pickupLongitude == null) return NextResponse.json({ error: 'Pickup GPS coordinates are not configured for this job' }, { status: 409 })
   if (accuracyMeters > ARRIVAL_GEOFENCE_METERS) return NextResponse.json({ error: 'GPS accuracy is too low. Move to an area with a stronger location signal and try again.', accuracyMeters }, { status: 422 })
 
+  const now = new Date()
+  const arrivalWindowOpensAt = new Date(job.scheduledAt.getTime() - PICKUP_REMINDER_MINUTES * 60000)
+  if (now < arrivalWindowOpensAt) {
+    return NextResponse.json({ error: 'Arrival verification is not available yet.', availableAt: arrivalWindowOpensAt }, { status: 409 })
+  }
+  const deadline = new Date(job.scheduledAt.getTime() + 45 * 60000)
+  if (now > deadline) return NextResponse.json({ error: 'The pickup window has expired. This job will be handled by the missed-pickup process.', deadline }, { status: 409 })
+
   const distance = distanceMeters(latitude, longitude, job.pickupLatitude, job.pickupLongitude)
   if (!isWithinArrivalGeofence(distance)) return NextResponse.json({ error: 'You are not close enough to the pickup location yet.', distanceMeters: Math.round(distance), requiredWithinMeters: ARRIVAL_GEOFENCE_METERS }, { status: 422 })
 
-  const now = new Date()
   const updated = await db.$transaction(async (tx) => {
     const locked = await tx.job.findUnique({ where: { id } })
     if (!locked || locked.haulerId !== profile.id || !['ASSIGNED', 'IN_PROGRESS'].includes(locked.status) || locked.arrivalVerifiedAt) return locked
