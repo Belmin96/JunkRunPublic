@@ -1,7 +1,7 @@
 /** Shared maintenance jobs for Vercel Cron and admin-triggered maintenance. */
 import { db } from './db'
 import { stripe } from './stripe'
-import { notifyUser } from './notify'
+import { notifyUser, notifyHaulersOfNewJob } from './notify'
 import { isoWeekRange } from './utils'
 import { AUTO_RETURN_HOURS, PICKUP_REMINDER_MINUTES, PICKUP_GRACE_MINUTES } from './constants'
 
@@ -9,27 +9,18 @@ export async function runPickupWatch() {
   const now = new Date()
   const reminderCutoff = new Date(now.getTime() + PICKUP_REMINDER_MINUTES * 60000)
   const overdueCutoff = new Date(now.getTime() - PICKUP_GRACE_MINUTES * 60000)
-
-  const reminderJobs = await db.job.findMany({
-    where: { status: 'ASSIGNED', arrivalType: 'SET_TIME', scheduledAt: { gt: now, lte: reminderCutoff }, pickupReminderSentAt: null, haulerId: { not: null } },
-    include: { hauler: true },
-  })
+  const reminderJobs = await db.job.findMany({ where: { status: 'ASSIGNED', arrivalType: 'SET_TIME', scheduledAt: { gt: now, lte: reminderCutoff }, pickupReminderSentAt: null, haulerId: { not: null } }, include: { hauler: true } })
   for (const job of reminderJobs) {
     const claimed = await db.job.updateMany({ where: { id: job.id, status: 'ASSIGNED', pickupReminderSentAt: null }, data: { pickupReminderSentAt: now } })
     if (!claimed.count || !job.hauler) continue
     await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_REMINDER', title: 'Pickup in 45 minutes', body: `${job.jobNumber} is scheduled for pickup at ${job.time ?? job.scheduledAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Open the job to navigate and verify arrival.`, jobId: job.id, url: `/hauler/jobs/${job.id}` })
   }
-
-  const missedJobs = await db.job.findMany({
-    where: { status: 'ASSIGNED', arrivalType: 'SET_TIME', scheduledAt: { lt: overdueCutoff }, arrivalVerifiedAt: null, missedPickupAt: null, haulerId: { not: null } },
-    include: { hauler: true },
-  })
+  const missedJobs = await db.job.findMany({ where: { status: 'ASSIGNED', arrivalType: 'SET_TIME', scheduledAt: { lt: overdueCutoff }, arrivalVerifiedAt: null, missedPickupAt: null, haulerId: { not: null } }, include: { hauler: true } })
+  let reposted = 0
   for (const job of missedJobs) {
     if (!job.haulerId || !job.hauler) continue
     const excludedHaulerId = job.haulerId
-    if (job.stripePaymentIntentId) {
-      await stripe.paymentIntents.cancel(job.stripePaymentIntentId).catch((err) => console.error(`Could not release hold for ${job.jobNumber}:`, err))
-    }
+    if (job.stripePaymentIntentId) await stripe.paymentIntents.cancel(job.stripePaymentIntentId).catch((err) => console.error(`Could not release hold for ${job.jobNumber}:`, err))
     const reopened = await db.$transaction(async (tx) => {
       const current = await tx.job.findUnique({ where: { id: job.id } })
       if (!current || current.status !== 'ASSIGNED' || current.missedPickupAt || current.arrivalVerifiedAt || current.haulerId !== excludedHaulerId) return null
@@ -39,18 +30,12 @@ export async function runPickupWatch() {
       return tx.job.update({ where: { id: job.id }, data: { status: 'POSTED', haulerId: null, priceCents: null, platformFeeCents: 0, haulerPayoutCents: 0, stripePaymentIntentId: null, paymentStatus: 'PENDING', acceptedAt: null, inProgressAt: null, pickupReminderSentAt: null, missedPickupAt: now, repostedAt: now, autoReturnedCount: { increment: 1 } } })
     })
     if (!reopened) continue
+    reposted += 1
     await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_MISSED', title: 'Pickup missed', body: `${job.jobNumber} was not verified as arrived within ${PICKUP_GRACE_MINUTES} minutes of the scheduled pickup. The job has been returned to the HaulBoard.`, jobId: job.id, url: '/hauler/dashboard' })
     await notifyUser({ userId: job.customerId, type: 'PICKUP_MISSED', title: 'Your job was reposted', body: `${job.jobNumber} was not picked up on time and has been returned to the HaulBoard for new estimates.`, jobId: job.id, url: `/customer/jobs/${job.id}` })
-    await notifyHaulersOfRepostedJob(job)
+    await notifyHaulersOfNewJob({ id: job.id, jobNumber: job.jobNumber, city: job.city, typesLabel: 'Reposted job' })
   }
-  return { remindersSent: reminderJobs.length, missedAndReposted: missedJobs.length }
-}
-
-async function notifyHaulersOfRepostedJob(job: { id: string; jobNumber: string; city: string; jobTypes: string; exclusions?: unknown }) {
-  const haulers = await db.haulerProfile.findMany({ where: { acceptingLoads: true, notificationsEnabled: true, NOT: { exclusions: { some: { jobId: job.id } } } }, select: { userId: true } })
-  let typesLabel = 'Junk removal'
-  try { const types = JSON.parse(job.jobTypes); if (Array.isArray(types)) typesLabel = types.slice(0, 2).join(', ') || typesLabel } catch {}
-  await Promise.all(haulers.map((h) => notifyUser({ userId: h.userId, type: 'JOB_POSTED', title: 'Reposted job on the HaulBoard', body: `${typesLabel} in ${job.city} · ${job.jobNumber}`, jobId: job.id, url: '/hauler/loads' })))
+  return { remindersSent: reminderJobs.length, missedAndReposted: reposted }
 }
 
 export async function runAutoReturn() {
