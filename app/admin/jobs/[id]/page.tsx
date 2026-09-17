@@ -20,6 +20,8 @@ export default async function AdminJobDetail({ params }: { params: Promise<{ id:
   })
   if (!job) notFound()
 
+  const resolvedDispute = job.status === 'DISPUTED' && !!job.disputeResolvedAt
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-start justify-between">
@@ -38,15 +40,15 @@ export default async function AdminJobDetail({ params }: { params: Promise<{ id:
 
       <PaymentFlowTracker status={job.status} />
 
-      <AdminJobActions
-        job={{
-          id: job.id,
-          status: job.status,
-          stripePaymentIntentId: job.stripePaymentIntentId,
-          haulerStripeId: job.hauler?.stripeAccountId ?? null,
-          disputeReason: job.disputeReason,
-        }}
-      />
+      {resolvedDispute && (
+        <div className="rounded-2xl border border-brand/30 bg-brand/10 p-5">
+          <p className="font-bold text-brand">Dispute decision recorded</p>
+          <p className="mt-1 text-sm text-slate-300">Outcome: {job.disputeOutcome ?? '—'}</p>
+          <p className="mt-1 text-xs text-amber-300">The job remains DISPUTED until the separate payment/refund workflow confirms the financial action.</p>
+        </div>
+      )}
+
+      <AdminJobActions job={{ id: job.id, status: job.status, disputeReason: job.disputeReason }} />
 
       <div className="grid grid-cols-2 gap-4">
         <div className="rounded-xl border border-white/10 bg-white/5 p-4">
@@ -103,10 +105,9 @@ export default async function AdminJobDetail({ params }: { params: Promise<{ id:
       )}
 
       <div className="space-y-1 rounded-xl border border-white/10 bg-white/5 p-4 font-mono text-xs text-slate-500">
-        <p>PaymentIntent: {job.stripePaymentIntentId ?? '—'}</p>
-        <p>Transfer: {job.stripeTransferId ?? '—'}</p>
         <p>Payment status: {job.paymentStatus}</p>
         {job.disputeWindowEnd && <p>Dispute window: {new Date(job.disputeWindowEnd).toLocaleString()}</p>}
+        {job.disputeResolvedAt && <p>Dispute resolved: {new Date(job.disputeResolvedAt).toLocaleString()}</p>}
       </div>
     </div>
   )
