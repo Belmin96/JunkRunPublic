@@ -4,6 +4,8 @@ import { getOrCreateDbUser } from '@/lib/auth'
 
 const OUTCOMES = ['CUSTOMER_REFUND', 'PARTIAL_REFUND', 'NO_REFUND', 'CONTRACTOR_REMEDY'] as const
 
+type Outcome = typeof OUTCOMES[number]
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const user = await getOrCreateDbUser()
@@ -15,19 +17,60 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const b = body && typeof body === 'object' ? body as Record<string, unknown> : {}
   const outcome = b.outcome
   const notes = typeof b.notes === 'string' ? b.notes.trim().normalize('NFC') : ''
-  if (typeof outcome !== 'string' || !OUTCOMES.includes(outcome as typeof OUTCOMES[number])) return NextResponse.json({ error: 'Invalid dispute outcome', allowedOutcomes: OUTCOMES }, { status: 422 })
-  if (notes.length > 1000) return NextResponse.json({ error: 'Notes must be 1000 characters or fewer' }, { status: 422 })
+  const refundAmountCents = b.refundAmountCents === undefined ? null : Number(b.refundAmountCents)
+
+  if (typeof outcome !== 'string' || !OUTCOMES.includes(outcome as Outcome)) return NextResponse.json({ error: 'Invalid dispute outcome', allowedOutcomes: OUTCOMES }, { status: 422 })
+  if (!notes || notes.length > 2000) return NextResponse.json({ error: 'Resolution notes are required and must be 2000 characters or fewer' }, { status: 422 })
+  if (outcome === 'PARTIAL_REFUND' && (!Number.isInteger(refundAmountCents) || refundAmountCents <= 0)) return NextResponse.json({ error: 'A positive refundAmountCents is required for a partial refund' }, { status: 422 })
+  if (outcome !== 'PARTIAL_REFUND' && refundAmountCents !== null) return NextResponse.json({ error: 'refundAmountCents is only valid for PARTIAL_REFUND' }, { status: 422 })
 
   const now = new Date()
-  const updated = await db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const job = await tx.job.findUnique({ where: { id } })
-    if (!job || job.status !== 'DISPUTED') return null
-    const nextPaymentStatus = outcome === 'NO_REFUND' || outcome === 'CONTRACTOR_REMEDY' ? job.paymentStatus : 'REFUNDED'
-    const next = await tx.job.update({ where: { id }, data: { status: 'COMPLETED', disputeOutcome: outcome, disputeResolvedAt: now, paymentStatus: nextPaymentStatus } })
-    await tx.auditLog.create({ data: { actorUserId: user.id, action: 'DISPUTE_RESOLVED', entityType: 'JOB', entityId: id, jobId: id, metadata: JSON.stringify({ outcome, notes, resolvedAt: now.toISOString(), paymentActionRequired: outcome === 'CUSTOMER_REFUND' || outcome === 'PARTIAL_REFUND' }) } })
-    return next
-  })
-  if (!updated) return NextResponse.json({ error: 'Dispute not found or already resolved' }, { status: 409 })
+    if (!job) return { kind: 'NOT_FOUND' as const }
+    if (job.status !== 'DISPUTED' || job.disputeResolvedAt) return { kind: 'ALREADY_RESOLVED' as const }
+    if (outcome === 'PARTIAL_REFUND' && refundAmountCents! > (job.priceCents ?? 0)) return { kind: 'INVALID_AMOUNT' as const }
 
-  return NextResponse.json({ job: updated, outcome, paymentActionRequired: outcome === 'CUSTOMER_REFUND' || outcome === 'PARTIAL_REFUND' })
+    const claimed = await tx.job.updateMany({
+      where: { id, status: 'DISPUTED', disputeResolvedAt: null },
+      data: {
+        status: 'COMPLETED',
+        disputeOutcome: outcome,
+        disputeResolvedAt: now,
+        // Intentionally do not change paymentStatus here. This endpoint records the decision;
+        // the actual Stripe refund/payout action is a separate payment operation.
+      },
+    })
+    if (!claimed.count) return { kind: 'ALREADY_RESOLVED' as const }
+
+    await tx.auditLog.create({
+      data: {
+        actorUserId: user.id,
+        action: 'DISPUTE_RESOLVED',
+        entityType: 'JOB',
+        entityId: id,
+        jobId: id,
+        metadata: JSON.stringify({
+          outcome,
+          notes,
+          refundAmountCents: outcome === 'PARTIAL_REFUND' ? refundAmountCents : outcome === 'CUSTOMER_REFUND' ? job.priceCents : null,
+          paymentActionRequired: outcome === 'CUSTOMER_REFUND' || outcome === 'PARTIAL_REFUND',
+          resolvedAt: now.toISOString(),
+        }),
+      },
+    })
+    return { kind: 'OK' as const, jobId: id, outcome }
+  })
+
+  if (result.kind === 'NOT_FOUND') return NextResponse.json({ error: 'Job not found' }, { status: 404 })
+  if (result.kind === 'INVALID_AMOUNT') return NextResponse.json({ error: 'Refund amount cannot exceed the job price' }, { status: 422 })
+  if (result.kind === 'ALREADY_RESOLVED') return NextResponse.json({ error: 'Dispute not found or already resolved' }, { status: 409 })
+
+  return NextResponse.json({
+    ok: true,
+    jobId: result.jobId,
+    outcome: result.outcome,
+    paymentActionRequired: result.outcome === 'CUSTOMER_REFUND' || result.outcome === 'PARTIAL_REFUND',
+    message: 'Dispute decision recorded. Any refund or payout movement must be processed separately.',
+  })
 }
