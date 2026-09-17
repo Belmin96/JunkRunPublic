@@ -5,10 +5,13 @@ import { notifyUser, notifyHaulersOfNewJob } from './notify'
 import { isoWeekRange } from './utils'
 import { AUTO_RETURN_HOURS, PICKUP_REMINDER_MINUTES, PICKUP_WARNING_MINUTES, PICKUP_DEADLINE_MINUTES } from './constants'
 
+const ANYTIME_PICKUP_WINDOW_MINUTES = 24 * 60
+const SET_TIME_WARNING_MINUTES = 15
+const ANYTIME_WARNING_MINUTES = 60
+
 export async function runPickupWatch() {
   const now = new Date()
   const reminderCutoff = new Date(now.getTime() + PICKUP_REMINDER_MINUTES * 60000)
-  const warningAtOrBefore = new Date(now.getTime() + (PICKUP_DEADLINE_MINUTES - PICKUP_WARNING_MINUTES) * 60000)
 
   const reminderJobs = await db.job.findMany({ where: { status: 'ASSIGNED', arrivalType: 'SET_TIME', scheduledAt: { gt: now, lte: reminderCutoff }, pickupReminderSentAt: null, haulerId: { not: null } }, include: { hauler: true } })
   for (const job of reminderJobs) {
@@ -17,14 +20,31 @@ export async function runPickupWatch() {
     await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_REMINDER', title: 'Pickup in 45 minutes', body: `${job.jobNumber} is scheduled for pickup at ${job.time ?? job.scheduledAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Open the job to navigate and verify arrival.`, jobId: job.id, url: `/hauler/jobs/${job.id}` })
   }
 
-  const warningJobs = await db.job.findMany({ where: { status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, pickupDeadlineAt: { gt: now, lte: warningAtOrBefore }, pickupWarningSentAt: null, haulerId: { not: null } }, include: { hauler: true } })
+  // The warning is based on the actual stored deadline, so SET_TIME jobs warn
+  // 15 minutes before their 45-minute window ends, while ANYTIME jobs warn
+  // 1 hour before their 24-hour window ends.
+  const anytimeWarningAtOrBefore = new Date(now.getTime() + ANYTIME_WARNING_MINUTES * 60000)
+  const setTimeWarningAtOrBefore = new Date(now.getTime() + SET_TIME_WARNING_MINUTES * 60000)
+  const warningJobs = await db.job.findMany({
+    where: {
+      status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
+      pickupDeadlineAt: { gt: now, lte: anytimeWarningAtOrBefore },
+      pickupWarningSentAt: null,
+      haulerId: { not: null },
+    },
+    include: { hauler: true },
+  })
   let warningsSent = 0
   for (const job of warningJobs) {
     if (!job.hauler) continue
-    const claimed = await db.job.updateMany({ where: { id: job.id, status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, pickupDeadlineAt: { gt: now, lte: warningAtOrBefore }, pickupWarningSentAt: null }, data: { pickupWarningSentAt: now } })
+    const isAnytime = job.arrivalType === 'ANYTIME'
+    const warningCutoff = isAnytime ? anytimeWarningAtOrBefore : setTimeWarningAtOrBefore
+    if (job.pickupDeadlineAt > warningCutoff) continue
+    const claimed = await db.job.updateMany({ where: { id: job.id, status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, pickupDeadlineAt: { gt: now, lte: warningCutoff }, pickupWarningSentAt: null }, data: { pickupWarningSentAt: now } })
     if (!claimed.count) continue
     warningsSent += 1
-    await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_REMINDER', title: '15 minutes left', body: `${job.jobNumber} has 15 minutes remaining in the pickup window. Arrive and verify pickup before the deadline.`, jobId: job.id, url: `/hauler/jobs/${job.id}` })
+    const minutesLeft = isAnytime ? ANYTIME_WARNING_MINUTES : SET_TIME_WARNING_MINUTES
+    await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_REMINDER', title: `${minutesLeft} minutes left`, body: `${job.jobNumber} has ${minutesLeft} minutes remaining in the ${isAnytime ? '24-hour' : '45-minute'} pickup window. Arrive and verify pickup before the deadline.`, jobId: job.id, url: `/hauler/jobs/${job.id}` })
   }
 
   const expired = await db.job.findMany({ where: { status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, pickupDeadlineAt: { lte: now }, haulerId: { not: null } }, include: { hauler: true } })
@@ -43,8 +63,9 @@ export async function runPickupWatch() {
     })
     if (!reopened) continue
     reposted += 1
-    await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_MISSED', title: 'Pickup window expired', body: `${job.jobNumber} was not completed within the 45-minute pickup window and has been returned to the HaulBoard. You cannot rebid on this reposted job.`, jobId: job.id, url: '/hauler/dashboard' })
-    await notifyUser({ userId: job.customerId, type: 'PICKUP_MISSED', title: 'Your job was reposted', body: `${job.jobNumber} was not completed within the 45-minute pickup window and has been returned to the HaulBoard for new estimates.`, jobId: job.id, url: `/customer/jobs/${job.id}` })
+    const windowLabel = job.arrivalType === 'ANYTIME' ? '24-hour' : '45-minute'
+    await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_MISSED', title: 'Pickup window expired', body: `${job.jobNumber} was not completed within the ${windowLabel} pickup window and has been returned to the HaulBoard. You cannot rebid on this reposted job.`, jobId: job.id, url: '/hauler/dashboard' })
+    await notifyUser({ userId: job.customerId, type: 'PICKUP_MISSED', title: 'Your job was reposted', body: `${job.jobNumber} was not completed within the ${windowLabel} pickup window and has been returned to the HaulBoard for new estimates.`, jobId: job.id, url: `/customer/jobs/${job.id}` })
     await notifyHaulersOfNewJob({ id: job.id, jobNumber: job.jobNumber, city: job.city, typesLabel: 'Reposted job' })
   }
   return { remindersSent: reminderJobs.length, warningsSent, missedAndReposted: reposted }
