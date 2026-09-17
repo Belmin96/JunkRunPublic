@@ -3,51 +3,54 @@ import { db } from './db'
 import { stripe } from './stripe'
 import { notifyUser, notifyHaulersOfNewJob } from './notify'
 import { isoWeekRange } from './utils'
-import { AUTO_RETURN_HOURS, PICKUP_REMINDER_MINUTES, PICKUP_GRACE_MINUTES } from './constants'
+import { AUTO_RETURN_HOURS, PICKUP_REMINDER_MINUTES, PICKUP_WARNING_MINUTES, PICKUP_DEADLINE_MINUTES, PICKUP_GRACE_MINUTES } from './constants'
 
 export async function runPickupWatch() {
   const now = new Date()
   const reminderCutoff = new Date(now.getTime() + PICKUP_REMINDER_MINUTES * 60000)
-  const overdueCutoff = new Date(now.getTime() - PICKUP_GRACE_MINUTES * 60000)
+  const warningCutoff = new Date(now.getTime() + (PICKUP_DEADLINE_MINUTES - PICKUP_WARNING_MINUTES) * 60000)
   const reminderJobs = await db.job.findMany({ where: { status: 'ASSIGNED', arrivalType: 'SET_TIME', scheduledAt: { gt: now, lte: reminderCutoff }, pickupReminderSentAt: null, haulerId: { not: null } }, include: { hauler: true } })
   for (const job of reminderJobs) {
     const claimed = await db.job.updateMany({ where: { id: job.id, status: 'ASSIGNED', pickupReminderSentAt: null }, data: { pickupReminderSentAt: now } })
     if (!claimed.count || !job.hauler) continue
     await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_REMINDER', title: 'Pickup in 45 minutes', body: `${job.jobNumber} is scheduled for pickup at ${job.time ?? job.scheduledAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Open the job to navigate and verify arrival.`, jobId: job.id, url: `/hauler/jobs/${job.id}` })
   }
-  const missedJobs = await db.job.findMany({ where: { status: 'ASSIGNED', arrivalType: 'SET_TIME', scheduledAt: { lt: overdueCutoff }, arrivalVerifiedAt: null, missedPickupAt: null, haulerId: { not: null } }, include: { hauler: true } })
+
+  const warningJobs = await db.job.findMany({ where: { status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, pickupDeadlineAt: { gt: now, lte: warningCutoff }, pickupReminderSentAt: { not: null }, haulerId: { not: null } }, include: { hauler: true } })
+  let warningsSent = 0
+  for (const job of warningJobs) {
+    if (!job.hauler) continue
+    const claimed = await db.job.updateMany({ where: { id: job.id, status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, pickupDeadlineAt: { gt: now, lte: warningCutoff }, pickupReminderSentAt: { not: null } }, data: { pickupReminderSentAt: now } })
+    if (!claimed.count) continue
+    warningsSent += 1
+    await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_REMINDER', title: '15 minutes left', body: `${job.jobNumber} has 15 minutes remaining in the pickup window. Arrive and verify pickup before the deadline.`, jobId: job.id, url: `/hauler/jobs/${job.id}` })
+  }
+
+  const expired = await db.job.findMany({ where: { status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, pickupDeadlineAt: { lte: now }, haulerId: { not: null } }, include: { hauler: true } })
   let reposted = 0
-  for (const job of missedJobs) {
+  for (const job of expired) {
     if (!job.haulerId || !job.hauler) continue
     const excludedHaulerId = job.haulerId
     if (job.stripePaymentIntentId) await stripe.paymentIntents.cancel(job.stripePaymentIntentId).catch((err) => console.error(`Could not release hold for ${job.jobNumber}:`, err))
     const reopened = await db.$transaction(async (tx) => {
       const current = await tx.job.findUnique({ where: { id: job.id } })
-      if (!current || current.status !== 'ASSIGNED' || current.missedPickupAt || current.arrivalVerifiedAt || current.haulerId !== excludedHaulerId) return null
-      await tx.jobHaulerExclusion.create({ data: { jobId: job.id, haulerId: excludedHaulerId, reason: 'MISSED_PICKUP' } }).catch(() => null)
+      if (!current || !['ASSIGNED', 'IN_PROGRESS'].includes(current.status) || !current.haulerId || current.haulerId !== excludedHaulerId || (current.pickupDeadlineAt && current.pickupDeadlineAt > now)) return null
+      await tx.jobHaulerExclusion.upsert({ where: { jobId_haulerId: { jobId: job.id, haulerId: excludedHaulerId } }, update: { reason: 'MISSED_PICKUP' }, create: { jobId: job.id, haulerId: excludedHaulerId, reason: 'MISSED_PICKUP' } })
       await tx.estimate.deleteMany({ where: { jobId: job.id } })
       await tx.jobDecline.deleteMany({ where: { jobId: job.id } })
-      return tx.job.update({ where: { id: job.id }, data: { status: 'POSTED', haulerId: null, priceCents: null, platformFeeCents: 0, haulerPayoutCents: 0, stripePaymentIntentId: null, paymentStatus: 'PENDING', acceptedAt: null, inProgressAt: null, pickupReminderSentAt: null, missedPickupAt: now, repostedAt: now, autoReturnedCount: { increment: 1 } } })
+      return tx.job.update({ where: { id: job.id }, data: { status: 'POSTED', haulerId: null, priceCents: null, platformFeeCents: 0, haulerPayoutCents: 0, stripePaymentIntentId: null, paymentStatus: 'PENDING', acceptedAt: null, authorizedAt: null, inProgressAt: null, evidenceSubmittedAt: null, verifiedAt: null, completedAt: null, disputeWindowEnd: null, pickupReminderSentAt: null, pickupDeadlineAt: null, autoReturnedAt: now, missedPickupAt: now, repostedAt: now, autoReturnedCount: { increment: 1 } } })
     })
     if (!reopened) continue
     reposted += 1
-    await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_MISSED', title: 'Pickup missed', body: `${job.jobNumber} was not verified as arrived within ${PICKUP_GRACE_MINUTES} minutes of the scheduled pickup. The job has been returned to the HaulBoard.`, jobId: job.id, url: '/hauler/dashboard' })
-    await notifyUser({ userId: job.customerId, type: 'PICKUP_MISSED', title: 'Your job was reposted', body: `${job.jobNumber} was not picked up on time and has been returned to the HaulBoard for new estimates.`, jobId: job.id, url: `/customer/jobs/${job.id}` })
+    await notifyUser({ userId: job.hauler.userId, type: 'PICKUP_MISSED', title: 'Pickup window expired', body: `${job.jobNumber} was not completed within the 45-minute pickup window and has been returned to the HaulBoard. You cannot rebid on this reposted job.`, jobId: job.id, url: '/hauler/dashboard' })
+    await notifyUser({ userId: job.customerId, type: 'PICKUP_MISSED', title: 'Your job was reposted', body: `${job.jobNumber} was not completed within the 45-minute pickup window and has been returned to the HaulBoard for new estimates.`, jobId: job.id, url: `/customer/jobs/${job.id}` })
     await notifyHaulersOfNewJob({ id: job.id, jobNumber: job.jobNumber, city: job.city, typesLabel: 'Reposted job' })
   }
-  return { remindersSent: reminderJobs.length, missedAndReposted: reposted }
+  return { remindersSent: reminderJobs.length, warningsSent, missedAndReposted: reposted }
 }
 
 export async function runAutoReturn() {
-  const cutoff = new Date(Date.now() - AUTO_RETURN_HOURS * 60 * 60 * 1000)
-  const stuck = await db.job.findMany({ where: { status: { in: ['ASSIGNED', 'IN_PROGRESS'] }, scheduledAt: { lt: cutoff } }, include: { hauler: true } })
-  for (const job of stuck) {
-    if (job.stripePaymentIntentId) await stripe.paymentIntents.cancel(job.stripePaymentIntentId).catch((err) => console.error(`Could not release hold for ${job.jobNumber}:`, err))
-    await db.$transaction([db.estimate.deleteMany({ where: { jobId: job.id } }), db.jobDecline.deleteMany({ where: { jobId: job.id } }), db.job.update({ where: { id: job.id }, data: { status: 'POSTED', haulerId: null, priceCents: null, platformFeeCents: 0, haulerPayoutCents: 0, stripePaymentIntentId: null, paymentStatus: 'PENDING', acceptedAt: null, inProgressAt: null, autoReturnedCount: { increment: 1 } } })])
-    if (job.hauler) await notifyUser({ userId: job.hauler.userId, type: 'JOB_AUTO_RETURNED', title: 'Job returned to the HaulBoard', body: `${job.jobNumber} wasn't completed within 24h of the scheduled time and was reassigned.`, url: '/hauler/dashboard' })
-    await notifyUser({ userId: job.customerId, type: 'JOB_AUTO_RETURNED', title: 'Your job is back on the HaulBoard', body: `${job.jobNumber} wasn't completed in time, so we reopened it for new estimates.`, jobId: job.id, url: `/customer/jobs/${job.id}` })
-  }
-  return { returned: stuck.length }
+  return runPickupWatch()
 }
 
 export async function runWeeklyPayoutSummary(weeksAgo = 1) {
