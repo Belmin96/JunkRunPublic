@@ -8,6 +8,7 @@ import { hasAcceptedLegal, CUSTOMER_LEGAL } from '@/lib/legal'
 import { z } from 'zod'
 
 const BodySchema = z.object({ estimateId: z.string().min(1) })
+const ANYTIME_PICKUP_WINDOW_MINUTES = 24 * 60
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -28,16 +29,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { platformFeeCents, haulerPayoutCents } = splitPayment(estimate.amountCents)
   const now = new Date()
 
-  // SET_TIME means the contractor's 45-minute pickup window starts at the
-  // customer's scheduled pickup time. ANYTIME starts the 45-minute window
-  // when the estimate is accepted.
+  // SET_TIME: the contractor gets 45 minutes starting at the scheduled pickup time.
+  // ANYTIME: the contractor gets 24 hours starting when the estimate is accepted.
+  const pickupWindowMinutes = estimate.job.arrivalType === 'ANYTIME'
+    ? ANYTIME_PICKUP_WINDOW_MINUTES
+    : PICKUP_DEADLINE_MINUTES
   const pickupWindowStart = estimate.job.arrivalType === 'SET_TIME'
     ? estimate.job.scheduledAt
     : now
-  const pickupDeadlineAt = new Date(pickupWindowStart.getTime() + PICKUP_DEADLINE_MINUTES * 60 * 1000)
+  const pickupDeadlineAt = new Date(pickupWindowStart.getTime() + pickupWindowMinutes * 60 * 1000)
 
   // A timed job cannot be accepted after its pickup window has already expired.
-  // This prevents assigning a contractor to a deadline that is already past.
   if (estimate.job.arrivalType === 'SET_TIME' && pickupDeadlineAt <= now) {
     return NextResponse.json({ error: 'This scheduled pickup window has already expired and cannot be assigned.' }, { status: 409 })
   }
@@ -58,10 +60,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const job = await tx.job.update({ where: { id, status: 'ASSIGNING' }, data: { status: 'ASSIGNED', stripePaymentIntentId: intent.id, paymentStatus: 'AUTHORIZED', authorizedAt: now, disputeWindowEnd: disputeWindowEnd() } })
       await tx.estimate.update({ where: { id: estimate.id }, data: { status: 'ACCEPTED' } })
       await tx.estimate.updateMany({ where: { jobId: id, id: { not: estimate.id }, status: 'PENDING' }, data: { status: 'DECLINED' } })
-      await tx.auditLog.create({ data: { actorUserId: user.id, action: 'ESTIMATE_ACCEPTED', entityType: 'ESTIMATE', entityId: estimate.id, jobId: id, metadata: JSON.stringify({ estimateId: estimate.id, amountCents: estimate.amountCents, pickupDeadlineAt: pickupDeadlineAt.toISOString(), pickupWindowStart: pickupWindowStart.toISOString(), arrivalType: estimate.job.arrivalType }) } })
+      await tx.auditLog.create({ data: { actorUserId: user.id, action: 'ESTIMATE_ACCEPTED', entityType: 'ESTIMATE', entityId: estimate.id, jobId: id, metadata: JSON.stringify({ estimateId: estimate.id, amountCents: estimate.amountCents, pickupDeadlineAt: pickupDeadlineAt.toISOString(), pickupWindowStart: pickupWindowStart.toISOString(), pickupWindowMinutes, arrivalType: estimate.job.arrivalType }) } })
       return job
     })
-    await notifyUser({ userId: estimate.hauler.userId, type: 'JOB_ASSIGNED', title: 'Your estimate was accepted!', body: `You're assigned to ${estimate.job.jobNumber}. Your 45-minute pickup window ends at ${pickupDeadlineAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`, jobId: id, url: `/hauler/jobs/${id}` })
+    const windowLabel = estimate.job.arrivalType === 'ANYTIME' ? '24-hour' : '45-minute'
+    await notifyUser({ userId: estimate.hauler.userId, type: 'JOB_ASSIGNED', title: 'Your estimate was accepted!', body: `You're assigned to ${estimate.job.jobNumber}. You have a ${windowLabel} pickup window ending at ${pickupDeadlineAt.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}.`, jobId: id, url: `/hauler/jobs/${id}` })
     return NextResponse.json(updated)
   } catch (err) {
     await stripe.paymentIntents.cancel(intent.id).catch((cancelErr) => console.error('Failed to cancel orphan authorization', cancelErr))
