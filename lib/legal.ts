@@ -8,9 +8,18 @@ export const LEGAL_VERSIONS = {
   PROHIBITED_MATERIALS: '2026-09-17-v1',
   CANCELLATION_REFUND: '2026-09-17-v1',
   DISPUTE_POLICY: '2026-09-17-v1',
+  SAFETY_INSURANCE: '2026-09-17-v1',
 } as const
 
 export type LegalDocument = keyof typeof LEGAL_VERSIONS
+
+export const CUSTOMER_LEGAL: LegalDocument[] = [
+  'TERMS_OF_SERVICE', 'PRIVACY_POLICY', 'PROHIBITED_MATERIALS', 'CANCELLATION_REFUND', 'DISPUTE_POLICY',
+]
+
+export const CONTRACTOR_LEGAL: LegalDocument[] = [
+  ...CUSTOMER_LEGAL, 'CONTRACTOR_AGREEMENT', 'INDEPENDENT_CONTRACTOR', 'SAFETY_INSURANCE',
+]
 
 export async function hasAcceptedLegal(userId: string, documents: LegalDocument[]) {
   if (documents.length === 0) return true
@@ -18,13 +27,14 @@ export async function hasAcceptedLegal(userId: string, documents: LegalDocument[
     where: { actorUserId: userId, action: 'LEGAL_ACCEPTED', entityType: 'LEGAL' },
     select: { entityId: true, metadata: true },
     orderBy: { createdAt: 'desc' },
-    take: 100,
+    take: 200,
   })
   const accepted = new Set<string>()
   for (const record of records) {
     try {
       const metadata = record.metadata ? JSON.parse(record.metadata) as { document?: string; version?: string } : null
-      if (metadata?.document && metadata.version === LEGAL_VERSIONS[metadata.document as LegalDocument]) accepted.add(metadata.document)
+      const document = metadata?.document ?? record.entityId
+      if (document && document in LEGAL_VERSIONS && metadata?.version === LEGAL_VERSIONS[document as LegalDocument]) accepted.add(document)
     } catch { /* Ignore malformed historical audit metadata. */ }
   }
   return documents.every((document) => accepted.has(document))
