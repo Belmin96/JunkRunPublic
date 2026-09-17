@@ -9,7 +9,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const job = await db.job.findUnique({
     where: { id },
-    select: { id: true, customerId: true, haulerId: true },
+    select: { customerId: true, haulerId: true },
   })
   if (!job) return NextResponse.json({ error: 'Job not found' }, { status: 404 })
 
@@ -32,7 +32,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       longitude: true,
       accuracyMeters: true,
       captureSource: true,
-      completionNonce: true,
       createdAt: true,
       userId: true,
     },
