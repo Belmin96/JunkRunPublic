@@ -13,7 +13,12 @@ export async function GET(req: NextRequest) {
   const user = await getOrCreateDbUser(); if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const tab = new URL(req.url).searchParams.get('tab')
   if (user.role === 'CUSTOMER') return NextResponse.json(await db.job.findMany({ where: { customerId: user.id }, orderBy: { createdAt: 'desc' }, include: { _count: { select: { estimates: true } } } }))
-  if (user.role === 'HAULER') { const profile = await db.haulerProfile.findUnique({ where: { userId: user.id } }); if (!profile) return NextResponse.json([]); if (tab === 'mine') return NextResponse.json(await db.job.findMany({ where: { haulerId: profile.id }, orderBy: { updatedAt: 'desc' } })); return NextResponse.json(await db.job.findMany({ where: { status: { in: ['POSTED', 'BIDDING'] }, NOT: { exclusions: { some: { haulerId: profile.id } } } }, orderBy: { createdAt: 'desc' }, take: 100, include: { estimates: { where: { haulerId: profile.id } } } })) }
+  if (user.role === 'HAULER') {
+    const profile = await db.haulerProfile.findUnique({ where: { userId: user.id } }); if (!profile) return NextResponse.json([])
+    if (tab === 'mine') return NextResponse.json(await db.job.findMany({ where: { haulerId: profile.id }, orderBy: { updatedAt: 'desc' } }))
+    const jobs = await db.job.findMany({ where: { status: { in: ['POSTED', 'BIDDING'] }, NOT: { exclusions: { some: { haulerId: profile.id } } } }, orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, jobNumber: true, status: true, jobTypes: true, whatToExpect: true, numStories: true, city: true, arrivalType: true, date: true, time: true, scheduledAt: true, beforePhotoUrl: true, createdAt: true, updatedAt: true, estimates: { where: { haulerId: profile.id }, select: { id: true, amountCents: true, arrival: true, message: true, status: true, createdAt: true } } } })
+    return NextResponse.json(jobs)
+  }
   if (!['ADMIN', 'OWNER'].includes(user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   return NextResponse.json(await db.job.findMany({ orderBy: { createdAt: 'desc' }, take: 200, include: { _count: { select: { estimates: true } } } }))
 }
