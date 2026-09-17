@@ -4,6 +4,7 @@ import { formatCents, formatDate } from '@/lib/utils'
 import { card } from '@/lib/ui'
 import NotificationsToggle from '@/components/NotificationsToggle'
 import InsuranceUpload from '@/components/InsuranceUpload'
+import StripeConnectCard from '@/components/StripeConnectCard'
 
 export const dynamic = 'force-dynamic'
 
@@ -49,6 +50,8 @@ export default async function HaulerProfilePage() {
           <NotificationsToggle initialEnabled={haulerProfile.notificationsEnabled} />
         </div>
       </div>
+
+      <StripeConnectCard initialConnected={!!haulerProfile.stripeAccountId} />
 
       <div className={card}>
         <InsuranceUpload docUrl={haulerProfile.insuranceDocUrl} verified={haulerProfile.insuranceVerified} />
