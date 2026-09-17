@@ -28,7 +28,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!hauler) return NextResponse.json({ error: 'Contractor profile not found' }, { status: 404 })
   const job = await db.job.findFirst({ where: { id, haulerId: hauler.id, status: 'IN_PROGRESS', completionNonce: parsed.data.completionNonce } })
   if (!job || !job.completionStartedAt || Date.now() - job.completionStartedAt.getTime() > 10 * 60 * 1000) return NextResponse.json({ error: 'Completion session expired. Start again at the job site.' }, { status: 409 })
-  if (job.pickupDeadlineAt && now >= job.pickupDeadlineAt) return NextResponse.json({ error: 'The 45-minute pickup window has expired. The job must be returned to the HaulBoard.' }, { status: 409 })
+  if (job.pickupDeadlineAt && now >= job.pickupDeadlineAt) {
+    const windowLabel = job.arrivalType === 'ANYTIME' ? '24-hour' : '45-minute'
+    return NextResponse.json({ error: `The ${windowLabel} pickup window has expired. The job must be returned to the HaulBoard.` }, { status: 409 })
+  }
 
   const result = await db.$transaction(async (tx) => {
     const updated = await tx.job.updateMany({ where: { id, haulerId: hauler.id, status: 'IN_PROGRESS', completionNonce: parsed.data.completionNonce, pickupDeadlineAt: { gt: now } }, data: { afterPhotoUrl: parsed.data.afterPhotoUrl, completionNonce: null, completionStartedAt: null, status: 'PENDING_PAYOUT', evidenceSubmittedAt: now, verifiedAt: now, disputeWindowEnd: disputeWindowEnd() } })
