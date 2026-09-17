@@ -3,7 +3,6 @@ import { db } from '@/lib/db'
 import { getOrCreateDbUser } from '@/lib/auth'
 
 const OUTCOMES = ['CUSTOMER_REFUND', 'PARTIAL_REFUND', 'NO_REFUND', 'CONTRACTOR_REMEDY'] as const
-
 type Outcome = typeof OUTCOMES[number]
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -34,11 +33,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const claimed = await tx.job.updateMany({
       where: { id, status: 'DISPUTED', disputeResolvedAt: null },
       data: {
-        status: 'COMPLETED',
+        // A dispute decision is not the same thing as payment completion.
+        // Keep DISPUTED until the separate payment/refund workflow confirms movement of funds.
         disputeOutcome: outcome,
         disputeResolvedAt: now,
-        // Intentionally do not change paymentStatus here. This endpoint records the decision;
-        // the actual Stripe refund/payout action is a separate payment operation.
       },
     })
     if (!claimed.count) return { kind: 'ALREADY_RESOLVED' as const }
@@ -54,7 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           outcome,
           notes,
           refundAmountCents: outcome === 'PARTIAL_REFUND' ? refundAmountCents : outcome === 'CUSTOMER_REFUND' ? job.priceCents : null,
-          paymentActionRequired: outcome === 'CUSTOMER_REFUND' || outcome === 'PARTIAL_REFUND',
+          paymentActionRequired: true,
           resolvedAt: now.toISOString(),
         }),
       },
@@ -70,7 +68,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ok: true,
     jobId: result.jobId,
     outcome: result.outcome,
-    paymentActionRequired: result.outcome === 'CUSTOMER_REFUND' || result.outcome === 'PARTIAL_REFUND',
-    message: 'Dispute decision recorded. Any refund or payout movement must be processed separately.',
+    paymentActionRequired: true,
+    message: 'Dispute decision recorded. The job remains DISPUTED until the separate payment/refund workflow is completed.',
   })
 }
