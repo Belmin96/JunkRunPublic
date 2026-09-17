@@ -91,7 +91,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(jobs)
     }
     const jobs = await db.job.findMany({
-      // JunkRun uses ESTIMATES, not bidding. Only genuinely open POSTED jobs belong on the contractor board.
       where: { status: 'POSTED', NOT: { exclusions: { some: { haulerId: profile.id } } } },
       orderBy: { createdAt: 'desc' }, take: 100,
       select: {
@@ -112,6 +111,7 @@ export async function POST(req: NextRequest) {
   const user = await getOrCreateDbUser(); if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }); if (user.role !== 'CUSTOMER') return NextResponse.json({ error: 'Only customers can post jobs' }, { status: 403 }); if (!user.paymentVerified) return NextResponse.json({ error: 'Add a verified payment method before posting a job', code: 'PAYMENT_UNVERIFIED' }, { status: 402 })
   const parsed = CreateJobSchema.safeParse(await req.json()); if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 }); const data = parsed.data
   if (data.arrivalType === 'SET_TIME' && !data.time) return NextResponse.json({ error: 'A pickup time is required' }, { status: 422 })
+  if (data.arrivalType === 'ANYTIME' && data.time) return NextResponse.json({ error: 'Anytime pickups cannot include a pickup time' }, { status: 422 })
   if ((data.pickupLatitude == null) !== (data.pickupLongitude == null)) return NextResponse.json({ error: 'Pickup latitude and longitude must be provided together' }, { status: 422 })
   if (data.scheduledAtIso && data.arrivalType !== 'SET_TIME') return NextResponse.json({ error: 'Scheduled timestamp is only valid for timed pickups' }, { status: 422 })
   const scheduledAt = data.scheduledAtIso ? new Date(data.scheduledAtIso) : new Date(`${data.date}T${data.time ?? '23:59'}:00`)
@@ -121,7 +121,11 @@ export async function POST(req: NextRequest) {
   let job
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      job = await db.job.create({ data: { jobNumber: newJobNumber(), customerId: user.id, jobTypes: JSON.stringify(data.jobTypes), questionnaire: data.questionnaire, whatToExpect: data.whatToExpect || null, numStories: data.numStories, pickupAddress: data.pickupAddress, city: data.city, zipCode: data.zipCode, arrivalType: data.arrivalType, date: data.date, time: data.arrivalType === 'SET_TIME' ? data.time! : null, timezone: data.timezone ?? 'UTC', scheduledAt, pickupLatitude: data.pickupLatitude, pickupLongitude: data.pickupLongitude, beforePhotoUrl: data.beforePhotoUrl, status: 'POSTED', paymentStatus: 'PENDING' } })
+      job = await db.$transaction(async (tx) => {
+        const createdJob = await tx.job.create({ data: { jobNumber: newJobNumber(), customerId: user.id, jobTypes: JSON.stringify(data.jobTypes), questionnaire: data.questionnaire, whatToExpect: data.whatToExpect || null, numStories: data.numStories, pickupAddress: data.pickupAddress, city: data.city, zipCode: data.zipCode, arrivalType: data.arrivalType, date: data.date, time: data.arrivalType === 'SET_TIME' ? data.time! : null, timezone: data.timezone ?? 'UTC', scheduledAt, pickupLatitude: data.pickupLatitude, pickupLongitude: data.pickupLongitude, beforePhotoUrl: data.beforePhotoUrl, status: 'POSTED', paymentStatus: 'PENDING' } })
+        await tx.jobPhoto.create({ data: { jobId: createdJob.id, userId: user.id, kind: 'BEFORE_CUSTOMER', photoUrl: data.beforePhotoUrl, capturedAt: new Date(), captureSource: 'CUSTOMER_SUBMITTED_WEB' } })
+        return createdJob
+      })
       break
     } catch (error: unknown) {
       const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : undefined
@@ -136,7 +140,7 @@ export async function POST(req: NextRequest) {
 
   if (!job) return NextResponse.json({ error: 'Unable to create job' }, { status: 500 })
 
-  await db.auditLog.create({ data: { actorUserId: user.id, action: 'JOB_CREATED', entityType: 'JOB', entityId: job.id, jobId: job.id, metadata: JSON.stringify({ timezone: job.timezone, scheduledAt: job.scheduledAt.toISOString(), questionnaire: data.questionnaire }) } })
+  await db.auditLog.create({ data: { actorUserId: user.id, action: 'JOB_CREATED', entityType: 'JOB', entityId: job.id, jobId: job.id, metadata: JSON.stringify({ timezone: job.timezone, scheduledAt: job.scheduledAt.toISOString(), questionnaire: data.questionnaire, beforePhotoEvidenceId: 'created-with-job' }) } })
   notifyHaulersOfNewJob({ id: job.id, jobNumber: job.jobNumber, city: job.city, typesLabel: data.jobTypes.slice(0, 2).join(', ') + (data.jobTypes.length > 2 ? '…' : '') }).catch(err => console.error('notifyHaulersOfNewJob failed:', err))
   return NextResponse.json({ jobId: job.id, jobNumber: job.jobNumber }, { status: 201 })
 }
