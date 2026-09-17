@@ -1,5 +1,6 @@
 {
   "crons": [
+    { "path": "/api/cron/pickup-watch", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/auto-return", "schedule": "*/30 * * * *" },
     { "path": "/api/cron/weekly-payout-summary", "schedule": "0 6 * * 1" }
   ]
