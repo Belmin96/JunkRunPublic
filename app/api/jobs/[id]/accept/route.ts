@@ -18,7 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let body: unknown; try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
   const parsed = BodySchema.safeParse(body); if (!parsed.success) return NextResponse.json({ error: 'Invalid request' }, { status: 422 })
 
-  const estimate = await db.estimate.findFirst({ where: { id: parsed.data.estimateId, jobId: id, status: 'PENDING' }, include: { hauler: true, job: { select: { id: true, customerId: true, status: true, jobNumber: true } } } })
+  const estimate = await db.estimate.findFirst({ where: { id: parsed.data.estimateId, jobId: id, status: 'PENDING' }, include: { hauler: true, job: { select: { id: true, customerId: true, status: true, jobNumber: true, arrivalType: true, scheduledAt: true } } } })
   if (!estimate) return NextResponse.json({ error: 'Estimate not found or no longer available' }, { status: 404 })
   if (estimate.job.customerId !== user.id) return NextResponse.json({ error: 'Only the customer who posted the job can approve an estimate' }, { status: 403 })
   if (estimate.job.status !== 'POSTED') return NextResponse.json({ error: 'Job is no longer accepting estimate approvals' }, { status: 409 })
@@ -26,7 +26,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!user.stripeCustomerId || !user.paymentMethodId || !user.paymentVerified) return NextResponse.json({ error: 'Add a verified payment method before accepting an estimate' }, { status: 402 })
 
   const { platformFeeCents, haulerPayoutCents } = splitPayment(estimate.amountCents)
-  const now = new Date(); const pickupDeadlineAt = new Date(now.getTime() + PICKUP_DEADLINE_MINUTES * 60 * 1000)
+  const now = new Date()
+
+  // SET_TIME means the contractor's 45-minute pickup window starts at the
+  // customer's scheduled pickup time. ANYTIME starts the 45-minute window
+  // when the estimate is accepted.
+  const pickupWindowStart = estimate.job.arrivalType === 'SET_TIME'
+    ? estimate.job.scheduledAt
+    : now
+  const pickupDeadlineAt = new Date(pickupWindowStart.getTime() + PICKUP_DEADLINE_MINUTES * 60 * 1000)
+
+  // A timed job cannot be accepted after its pickup window has already expired.
+  // This prevents assigning a contractor to a deadline that is already past.
+  if (estimate.job.arrivalType === 'SET_TIME' && pickupDeadlineAt <= now) {
+    return NextResponse.json({ error: 'This scheduled pickup window has already expired and cannot be assigned.' }, { status: 409 })
+  }
+
   const locked = await db.job.updateMany({ where: { id, customerId: user.id, status: 'POSTED' }, data: { status: 'ASSIGNING', haulerId: estimate.haulerId, priceCents: estimate.amountCents, platformFeeCents, haulerPayoutCents, acceptedAt: now, pickupDeadlineAt, pickupReminderSentAt: null, autoReturnedAt: null, missedPickupAt: null, repostedAt: null } })
   if (locked.count !== 1) return NextResponse.json({ error: 'Job was already accepted or changed' }, { status: 409 })
 
@@ -43,7 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const job = await tx.job.update({ where: { id, status: 'ASSIGNING' }, data: { status: 'ASSIGNED', stripePaymentIntentId: intent.id, paymentStatus: 'AUTHORIZED', authorizedAt: now, disputeWindowEnd: disputeWindowEnd() } })
       await tx.estimate.update({ where: { id: estimate.id }, data: { status: 'ACCEPTED' } })
       await tx.estimate.updateMany({ where: { jobId: id, id: { not: estimate.id }, status: 'PENDING' }, data: { status: 'DECLINED' } })
-      await tx.auditLog.create({ data: { actorUserId: user.id, action: 'ESTIMATE_ACCEPTED', entityType: 'ESTIMATE', entityId: estimate.id, jobId: id, metadata: JSON.stringify({ estimateId: estimate.id, amountCents: estimate.amountCents, pickupDeadlineAt: pickupDeadlineAt.toISOString() }) } })
+      await tx.auditLog.create({ data: { actorUserId: user.id, action: 'ESTIMATE_ACCEPTED', entityType: 'ESTIMATE', entityId: estimate.id, jobId: id, metadata: JSON.stringify({ estimateId: estimate.id, amountCents: estimate.amountCents, pickupDeadlineAt: pickupDeadlineAt.toISOString(), pickupWindowStart: pickupWindowStart.toISOString(), arrivalType: estimate.job.arrivalType }) } })
       return job
     })
     await notifyUser({ userId: estimate.hauler.userId, type: 'JOB_ASSIGNED', title: 'Your estimate was accepted!', body: `You're assigned to ${estimate.job.jobNumber}. Your 45-minute pickup window ends at ${pickupDeadlineAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`, jobId: id, url: `/hauler/jobs/${id}` })
