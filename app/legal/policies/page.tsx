@@ -1,0 +1,8 @@
+import Link from "next/link";
+const policies=[
+["Prohibited Materials","/legal/prohibited-materials","Jobs involving hazardous, illegal, regulated, unsafe, or otherwise prohibited materials may not be posted or accepted. Users must accurately disclose job contents and contractors must stop work if unsafe or prohibited materials are discovered."],
+["Cancellation & Refund Policy","/legal/cancellation-refund","Cancellations, missed pickups, refunds, and payment releases are governed by the job status, applicable platform rules, and any applicable payment-provider rules. The platform may refund a customer when a contractor misses the applicable pickup deadline."],
+["Dispute & Evidence Policy","/legal/disputes","JunkRun may review before/after photos, timestamps, GPS metadata, messages, job records, and audit logs when investigating a dispute. Users should preserve truthful evidence and cooperate with reasonable requests."],
+["Independent Contractor / 1099","/legal/contractor-agreement","Contractors participate as independent businesses or individuals, not JunkRun employees, subject to applicable law. Contractors are responsible for their own taxes and legal obligations."]
+];
+export default function Policies(){return <main className="mx-auto max-w-3xl p-6"><h1 className="text-3xl font-bold">JunkRun Legal & Policies</h1><p className="mt-4">These documents are product drafts and require legal review before production use.</p>{policies.map(([title,href,text])=><section key={href} className="mt-8"><h2 className="text-xl font-semibold"><Link className="underline" href={href}>{title}</Link></h2><p className="mt-2">{text}</p></section>)}</main>}
