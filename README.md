@@ -1,124 +1,65 @@
 # JunkRun — Curb it. We'll serve it.
 
-> **This copy is in demo mode** — real Clerk auth is mocked so it runs with
-> zero setup. See [`DEMO.md`](./DEMO.md) before reading the "What's real vs.
-> what needs your keys" section below, which describes the *non-demo* state.
+> **Demo mode:** Clerk can be mocked for local browsing. See `DEMO.md` for the demo/non-demo boundary.
 
-A two-sided junk removal marketplace: customers post a job with a photo, contractors browse the **HaulBoard** and send estimates, the customer picks one, and payment is held until the job is verified done.
-
----
+A two-sided junk-removal marketplace: customers post a job with a photo and questionnaire, contractors browse the **HaulBoard** and send estimates, the customer picks one, and payment is held until the job is verified done.
 
 ## Stack
 
 | Layer | Tech |
 |---|---|
-| Framework | Next.js 15 App Router (TypeScript), built as an installable PWA |
-| Auth | Clerk (Google OAuth + Phone/SMS OTP) |
-| Database | SQLite via Prisma ORM (swap to Postgres for production — see below) |
-| Payments | Stripe (SetupIntent for card verification, PaymentIntents with manual capture, Connect for payouts) |
-| Notifications | Web Push (VAPID, self-hosted — no 3rd-party push vendor) + in-app notification center |
+| Framework | Next.js 15 App Router (TypeScript), installable PWA |
+| Auth | Clerk |
+| Database | PostgreSQL via Prisma for production |
+| Payments | Stripe (SetupIntent, PaymentIntents/manual capture, Connect) |
+| Notifications | Web Push + in-app notification center |
 | UI | Tailwind CSS |
+| Pickup tracking | Browser GPS + Leaflet/OpenStreetMap + Google Maps navigation |
 
----
+## Pickup tracking and arrival verification
 
-## What's real vs. what needs your keys
+For timed pickups, the customer captures GPS while physically at the pickup address. The job stores the pickup coordinates and the customer's IANA timezone. The assigned contractor gets a reminder 45 minutes before pickup, can open the pickup map and external turn-by-turn navigation, and can use **I've Arrived** during the 45-minute arrival window.
 
-This runs out of the box against a local SQLite database with seed data — you can click through every screen immediately. Three things need your own credentials before they're fully live:
+Arrival verification is enforced server-side: the contractor must be assigned to the job, the current time must be between 45 minutes before and 45 minutes after the scheduled pickup, GPS accuracy must be within 250 meters, and the reported location must be within 250 meters of the saved pickup coordinates. A verified arrival changes the job to `IN_PROGRESS` and is audit logged.
 
-1. **Clerk auth** — `.env.local` ships with a syntactically-valid placeholder key so the app builds and the public pages render, but Clerk safely 404s any protected route until you drop in a real publishable/secret key pair.
-2. **Stripe** — job posting, browsing, and estimates all work with no Stripe keys. The moment a customer verifies a card (`/customer/payment`) or accepts an estimate (which charges the saved card), you need real **test-mode** Stripe keys.
-3. **Camera capture** — before/after photos use `<input capture="environment">`, which opens the device camera directly on mobile browsers (Chrome/Safari on Android & iOS) instead of the photo library. This is the strongest "camera-only" guarantee a web app can give — a determined user on desktop Chrome can still pick a file, since there's no OS-level lockout outside a native app build.
-4. **Push notifications** — real Web Push is wired up with a generated VAPID key pair (already in `.env.local` for local dev). Once a user taps "Enable alerts" and grants permission, they get real OS-level notifications — this **does** work today, no extra service needed. For it to reach a phone as an actual "app," the user should use "Add to Home Screen" so it runs as an installed PWA.
+The pickup watcher runs every 5 minutes. If a timed pickup passes the 45-minute grace period without verified arrival, the payment authorization is cancelled when possible, the original contractor is excluded from that repost, the job returns to the HaulBoard, and eligible contractors are notified. The missed contractor is not notified about the repost as a new job.
 
----
+The map's on-device contractor marker is live while the contractor has granted GPS permission. Distance is calculated locally. The displayed ETA is intentionally labeled as a rough distance-based estimate; **Navigate** opens Google Maps for real turn-by-turn routing and traffic-aware ETA.
 
-## Local Setup
+## Customer questionnaire
 
-### 1. Prerequisites
-- Node.js 20+
+A posted job includes job type(s), what to expect, number of stories, a required before photo, address, pickup GPS coordinates, and either a set pickup time or "Anytime that day." Contractors receive the questionnaire with the job so they can price the work accurately.
 
-### 2. Install
-```bash
-npm install --legacy-peer-deps
-```
-(`--legacy-peer-deps` works around a peer-dependency range mismatch between this Next.js version and the latest Clerk SDK — harmless.)
+## Payment flow
 
-### 3. Configure environment
-`.env` holds `DATABASE_URL` (read by the Prisma CLI). `.env.local` holds everything else (read by Next.js). Both already exist with working defaults — edit `.env.local` to drop in real Clerk/Stripe keys when you have them. To generate your own Web Push keys:
-```bash
-npm run vapid:generate
-```
-
-### 4. Database
-```bash
-npm run db:push   # create/sync the SQLite schema
-npm run db:seed   # demo data: 1 owner, 1 verified customer, 2 contractors (one verified, one pending), 4 jobs in different stages
-```
-Seeded logins use fake Clerk IDs, so they're for browsing DB state (`npm run db:studio`) rather than signing in — real sign-in requires real Clerk keys and creates its own users via the `/api/webhooks/clerk` webhook.
-
-### 5. Run
-```bash
-npm run dev
-```
-Open http://localhost:3000.
-
----
-
-## Switching to Postgres for production
-
-Edit `prisma/schema.prisma`'s datasource to:
-```prisma
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-```
-SQLite doesn't support native enums, so every status/role/type field here is a plain `String` with the allowed values documented in `lib/constants.ts` — that still works fine on Postgres, no schema changes needed beyond the provider line. Point `DATABASE_URL` at a hosted Postgres (e.g. [Neon](https://neon.tech)) and run `npx prisma db push`.
-
----
-
-## The flow
-
-```
-Customer posts job (photo + questionnaire) → HaulBoard notifies contractors
-  → Contractors estimate or pass → Customer accepts one estimate (card charged as a hold)
-  → Contractor starts job → Contractor captures after photo → job enters 24h dispute window
-  → Admin (or auto after window) releases payment → 90% to contractor, 10% to JunkRun
-```
-
-- **Job posting questionnaire**: job type(s) (Furniture / Appliances / Construction Debris / Yard Waste / Mattresses / Electronics), what to expect, how many stories, a required before photo, address, and either a set time or "Anytime that day."
-- **Evidence checklist**: before photo comes from the **customer** at posting time; after photo comes from the **contractor** at completion. Payment only releases once both exist.
-- **Auto-return**: if an assigned job isn't completed within 24h of its scheduled pickup, it's automatically unassigned, its card hold released, and it reappears on the HaulBoard for new estimates (`/api/cron/auto-return`, wired to run every 30 min via `vercel.json`; trigger manually from `/admin/finance`).
-- **Reviews**: customers and contractors each rate the other after a completed job. On the **customer's own profile**, reviews from contractors are shown without attribution — no name tells them which contractor left which review. Contractor profiles show the reviewer's name normally.
-- **Verification**: a customer can't post a job until they've verified a payment method (`/customer/payment`, backed by a Stripe SetupIntent). A contractor's "Verified Pro" badge comes from an admin approving their uploaded insurance doc (`/admin/verification`).
-- **Finance**: JunkRun's 10% platform fee and each contractor's 90% payout are tracked as separate running totals (`/admin/finance`), with a weekly rollup (`WeeklyPayout`) generated by `/api/cron/weekly-payout-summary` (Mondays via `vercel.json`, or manually).
-- **Receipts**: printable receipts for both sides at `/customer/jobs/[id]/receipt` and `/hauler/jobs/[id]/receipt` (browser print-to-PDF).
-
----
+Customer verifies a payment method before posting. Contractors submit estimates. The customer accepts one estimate. Stripe holds/authorizes the payment according to the configured payment flow, and the contractor receives the payout after the job passes the completion/dispute process. JunkRun tracks the platform fee separately.
 
 ## Roles
 
 | Role | Home | Access |
 |---|---|---|
 | `CUSTOMER` | `/customer/dashboard` | Post jobs, review estimates, pay, dispute, review contractors |
-| `HAULER` | `/hauler/loads` | Browse the HaulBoard, estimate or pass, complete jobs, manage insurance & alerts |
-| `ADMIN` | `/admin/ops` | Ops dashboard, All Loads, Verification queue, Finance, dispute resolution |
-| `OWNER` | same as `ADMIN` | Full access |
+| `HAULER` | `/hauler/loads` | Browse the HaulBoard, estimate/pass, navigate to pickups, complete jobs, manage verification |
+| `ADMIN` | `/admin/ops` | Operations, verification, finance, disputes |
+| `OWNER` | `/admin/ops` | Full administrative access |
 
-Roles live in Clerk's `publicMetadata.role` (uppercase — `CUSTOMER` / `HAULER` / `ADMIN` / `OWNER`) and sync to the DB via the Clerk webhook. Promote a user to `ADMIN`/`OWNER` from the Clerk dashboard.
+## Production deployment
 
----
+1. Use PostgreSQL and set `DATABASE_URL` in Vercel.
+2. Run Prisma migrations during deployment (`prisma migrate deploy`).
+3. Add Clerk, Stripe, Web Push/VAPID, and `CRON_SECRET` environment variables from `.env.example`.
+4. Configure Clerk and Stripe webhooks for the production domain.
+5. Vercel Cron runs pickup watching every 5 minutes, auto-return every 30 minutes, and the weekly payout summary on Mondays.
+6. Test customer posting, contractor estimating/acceptance, pickup reminders, GPS arrival, missed-pickup reposting, payment state transitions, photo evidence, disputes, and payouts in a Vercel preview/staging environment before production.
 
-## Deploying (Vercel)
+### Database migration
 
-1. Push to GitHub, import in Vercel.
-2. Switch to Postgres (see above) — Vercel's serverless functions can't share a SQLite file.
-3. Add every var from `.env.example` in Vercel project settings, including a real `CRON_SECRET` (Vercel Cron sends it automatically as `Authorization: Bearer $CRON_SECRET` when the env var is named exactly that).
-4. `vercel.json` already schedules `/api/cron/auto-return` (every 30 min) and `/api/cron/weekly-payout-summary` (Mondays).
-5. Point Clerk's and Stripe's webhook URLs at your production domain.
+The current schema uses PostgreSQL. The pickup-tracking migrations add pickup coordinates, arrival evidence, missed-pickup state, contractor exclusions, and the stored pickup timezone. Apply all migrations before using the pickup tracking flow.
 
----
+## Important operational notes
 
-## Known dependency advisory
-
-`npm audit` flags a `postcss` vulnerability bundled *inside* Next.js's own build tooling (dev/build-time only, not shipped to the browser). It clears once you're willing to take Next.js 16 (a breaking major bump) — left as-is for now since it doesn't affect the running app.
+- GPS coordinates are location data. Restrict access to the assigned contractor/customer/admin paths and avoid exposing raw coordinates in public HaulBoard responses.
+- Browser GPS requires HTTPS and user permission in production.
+- The customer should capture pickup GPS while physically at the pickup location; GPS is not an address geocoder.
+- A map tile provider is not a turn-by-turn routing service. The app uses the map for situational awareness and Google Maps for navigation.
+- Never put Clerk secret keys, Stripe secret keys, webhook secrets, database credentials, or VAPID private keys in client-side code or GitHub source.
