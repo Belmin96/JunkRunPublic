@@ -10,19 +10,17 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // JunkRun brand — lime green + near-black, lifted from the logo, on a
-        // clean light UI so it's pleasant for long dashboard/form sessions.
         brand: {
-          DEFAULT: '#63C21B',
-          dark: '#4A9A12',
-          light: '#E8F7D9',
+          DEFAULT: '#A8FF00',
+          dark: '#70C900',
+          light: '#EFFFCC',
         },
-        ink: '#10140C',
-        bg: '#F7FAF3',
-        card: '#FFFFFF',
+        ink: '#0D1109',
+        bg: '#0D1109',
+        card: '#171D11',
         border: {
-          DEFAULT: '#E3E9DB',
-          '2': '#D3DCC7',
+          DEFAULT: '#29321F',
+          '2': '#3A472B',
         },
       },
       borderRadius: {
@@ -31,7 +29,7 @@ const config: Config = {
         sm: 'calc(var(--radius) - 4px)',
       },
       maxWidth: {
-        phone: '430px', // common modern phone logical width (iPhone 14/15 Pro Max ≈ 430pt) — used as the app "shell" so it feels native on any screen
+        phone: '430px',
       },
     },
   },
