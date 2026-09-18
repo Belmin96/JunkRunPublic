@@ -9,5 +9,9 @@ UPDATE "StripeEvent"
 SET "status" = 'PROCESSED'
 WHERE "processedAt" IS NOT NULL;
 
+ALTER TABLE "StripeEvent"
+  ALTER COLUMN "processedAt" DROP NOT NULL,
+  ALTER COLUMN "processedAt" DROP DEFAULT;
+
 CREATE INDEX "StripeEvent_type_status_idx" ON "StripeEvent"("type", "status");
 CREATE INDEX "StripeEvent_status_updatedAt_idx" ON "StripeEvent"("status", "updatedAt");
