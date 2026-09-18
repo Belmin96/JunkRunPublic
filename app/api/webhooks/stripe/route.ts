@@ -7,6 +7,19 @@ export const runtime = 'nodejs'
 
 const STALE_PROCESSING_MS = 5 * 60 * 1000
 
+async function reconcilePaymentIntent(pi: Stripe.PaymentIntent) {
+  const jobId = pi.metadata.jobId
+  if (!jobId) return
+  const terminal = ['TRANSFERRED','REFUNDED','PARTIALLY_REFUNDED']
+  if (pi.status === 'requires_capture') {
+    await db.job.updateMany({ where:{id:jobId,stripePaymentIntentId:pi.id,paymentStatus:{notIn:terminal}}, data:{paymentStatus:'AUTHORIZED',authorizedAt:new Date(pi.created*1000)} })
+  } else if (pi.status === 'succeeded') {
+    await db.job.updateMany({ where:{id:jobId,stripePaymentIntentId:pi.id,paymentStatus:{notIn:terminal}}, data:{paymentStatus:'CAPTURED'} })
+  } else if (pi.status === 'canceled') {
+    await db.job.updateMany({ where:{id:jobId,stripePaymentIntentId:pi.id,status:{in:['ASSIGNING','ASSIGNED','PAYOUT_PROCESSING']},paymentStatus:{notIn:terminal}}, data:{status:'CANCELLED',paymentStatus:'PENDING'} })
+  }
+}
+
 async function reconcileTransfer(transfer: Stripe.Transfer) {
   const jobId = transfer.metadata.jobId
   if (!jobId) return
@@ -92,39 +105,20 @@ export async function POST(req: NextRequest) {
     switch (event.type) {
       case 'payment_intent.amount_capturable_updated': {
         const pi = event.data.object as Stripe.PaymentIntent
-        if (pi.metadata.jobId) {
-          await db.job.updateMany({
-            where: { id: pi.metadata.jobId, stripePaymentIntentId: pi.id, status: { notIn: ['COMPLETED','CANCELLED'] }, paymentStatus: { notIn: ['TRANSFERRED','REFUNDED','PARTIALLY_REFUNDED'] } },
-            data: { authorizedAt: new Date(pi.created * 1000), paymentStatus: 'AUTHORIZED' },
-          })
-        }
+        await reconcilePaymentIntent(pi)
         break
       }
 
       case 'payment_intent.succeeded': {
         const pi = event.data.object as Stripe.PaymentIntent
-        if (pi.metadata.jobId) {
-          await db.job.updateMany({
-            where: { id: pi.metadata.jobId, stripePaymentIntentId: pi.id, paymentStatus: { notIn: ['TRANSFERRED','REFUNDED','PARTIALLY_REFUNDED'] } },
-            data: { paymentStatus: 'CAPTURED' },
-          })
-        }
+        await reconcilePaymentIntent(pi)
         break
       }
 
       case 'payment_intent.payment_failed':
       case 'payment_intent.canceled': {
         const pi = event.data.object as Stripe.PaymentIntent
-        if (pi.metadata.jobId) {
-          await db.job.updateMany({
-            where: {
-              id: pi.metadata.jobId,
-              stripePaymentIntentId: pi.id,
-              status: { in: ['ASSIGNED', 'ASSIGNING'] },
-            },
-            data: { status: 'CANCELLED', paymentStatus: 'PENDING' },
-          })
-        }
+        await reconcilePaymentIntent(pi)
         break
       }
 
@@ -158,7 +152,7 @@ export async function POST(req: NextRequest) {
         if (piId) {
           await db.job.updateMany({
             where: { stripePaymentIntentId: piId },
-            data: { paymentStatus: charge.amount_refunded >= charge.amount ? 'REFUNDED' : 'PARTIALLY_REFUNDED' },
+            data: { paymentStatus: charge.amount_refunded >= charge.amount ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundAmountCents: charge.amount_refunded, refundStatus: charge.amount_refunded >= charge.amount ? 'SUCCEEDED' : 'PARTIAL' },
           })
         }
         break
