@@ -17,4 +17,14 @@ model Notification { id String @id @default(cuid()) userId String user User @rel
 model Message { id String @id @default(cuid()) jobId String job Job @relation(fields: [jobId], references: [id]) senderId String sender User @relation("MessagesSent", fields: [senderId], references: [id]) senderRole String text String createdAt DateTime @default(now()) @@index([jobId, createdAt]) @@index([senderId, createdAt]) }
 model WeeklyPayout { id String @id @default(cuid()) hauler HaulerProfile @relation(fields: [haulerId], references: [id]) haulerId String weekStart DateTime weekEnd DateTime jobCount Int grossCents Int platformFeeCents Int payoutCents Int status String @default("PENDING") generatedAt DateTime @default(now()) paidAt DateTime? @@unique([haulerId, weekStart]) @@index([weekStart, status]) }
 model AuditLog { id String @id @default(cuid()) actorUserId String? actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull) action String entityType String entityId String? metadata String? createdAt DateTime @default(now()) jobId String? job Job? @relation(fields: [jobId], references: [id], onDelete: SetNull) @@index([actorUserId, createdAt]) @@index([entityType, entityId, createdAt]) @@index([jobId, createdAt]) }
-model StripeEvent { id String @id type String processedAt DateTime @default(now()) @@index([type, processedAt]) }
+model StripeEvent {
+  id String @id
+  type String
+  status String @default("PROCESSING")
+  processedAt DateTime?
+  lastError String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([type, status])
+  @@index([status, updatedAt])
+}
