@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
         const pi = event.data.object as Stripe.PaymentIntent
         if (pi.metadata.jobId) {
           await db.job.updateMany({
-            where: { id: pi.metadata.jobId, stripePaymentIntentId: pi.id },
+            where: { id: pi.metadata.jobId, stripePaymentIntentId: pi.id, paymentStatus: { notIn: ['TRANSFERRED','REFUNDED','PARTIALLY_REFUNDED'] } },
             data: { paymentStatus: 'CAPTURED' },
           })
         }
@@ -134,14 +134,7 @@ export async function POST(req: NextRequest) {
       }
 
       case 'transfer.paid': {
-        const transfer = event.data.object as Stripe.Transfer
-        const jobId = transfer.metadata.jobId
-        if (jobId) {
-          await db.job.updateMany({
-            where: { id: jobId, stripeTransferId: null },
-            data: { stripeTransferId: transfer.id },
-          })
-        }
+        await reconcileTransfer(event.data.object as Stripe.Transfer)
         break
       }
 
