@@ -44,11 +44,11 @@ export default async function AdminJobDetail({ params }: { params: Promise<{ id:
         <div className="rounded-2xl border border-brand/30 bg-brand/10 p-5">
           <p className="font-bold text-brand">Dispute decision recorded</p>
           <p className="mt-1 text-sm text-slate-300">Outcome: {job.disputeOutcome ?? '—'}</p>
-          <p className="mt-1 text-xs text-amber-300">The job remains DISPUTED until the separate payment/refund workflow confirms the financial action.</p>
+          <p className="mt-1 text-xs text-amber-300">Financial status: {job.disputeFinancialStatus}. Execute the financial action below to move money and finalize the job.</p>
         </div>
       )}
 
-      <AdminJobActions job={{ id: job.id, status: job.status, disputeReason: job.disputeReason }} />
+      <AdminJobActions job={{ id: job.id, status: job.status, disputeReason: job.disputeReason, disputeResolvedAt: job.disputeResolvedAt?.toISOString() ?? null, disputeOutcome: job.disputeOutcome, disputeFinancialStatus: job.disputeFinancialStatus }} />
 
       <div className="grid grid-cols-2 gap-4">
         <div className="rounded-xl border border-white/10 bg-white/5 p-4">

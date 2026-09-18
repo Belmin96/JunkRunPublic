@@ -37,6 +37,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // Keep DISPUTED until the separate payment/refund workflow confirms movement of funds.
         disputeOutcome: outcome,
         disputeResolvedAt: now,
+        disputeFinancialStatus: 'NONE',
+        refundAmountCents: outcome === 'PARTIAL_REFUND' ? refundAmountCents : outcome === 'CUSTOMER_REFUND' ? (job.priceCents ?? 0) : null,
+        stripeRefundId: null,
       },
     })
     if (!claimed.count) return { kind: 'ALREADY_RESOLVED' as const }
