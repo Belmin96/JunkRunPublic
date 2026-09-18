@@ -1,24 +1,22 @@
 import { auth } from '@clerk/nextjs/server'
 import { redirect } from 'next/navigation'
 import { getOrCreateDbUser } from '@/lib/auth'
+import { hasAcceptedLegal, CUSTOMER_LEGAL, CONTRACTOR_LEGAL } from '@/lib/legal'
 
-/**
- * /redirect — called immediately after sign-in/sign-up.
- * Reads the user's role from Clerk session claims (set by webhook)
- * and redirects to the matching dashboard.
- */
 export default async function RedirectPage() {
-  const { userId, sessionClaims } = await auth()
+  const { userId } = await auth()
   if (!userId) redirect('/sign-in')
 
-  // Ensure a DB row exists for this user
   const dbUser = await getOrCreateDbUser()
-  const role =
-    (sessionClaims?.metadata as { role?: string })?.role ??
-    dbUser?.role ??
-    'CUSTOMER'
+  if (!dbUser) redirect('/sign-in')
 
-  switch (role) {
+  const required = dbUser.role === 'HAULER' ? CONTRACTOR_LEGAL : CUSTOMER_LEGAL
+
+  if (!(await hasAcceptedLegal(dbUser.id, required))) {
+    redirect('/legal/accept')
+  }
+
+  switch (dbUser.role) {
     case 'OWNER':
     case 'ADMIN':
       redirect('/admin/ops')
