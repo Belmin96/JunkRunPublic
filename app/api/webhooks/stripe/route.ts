@@ -7,6 +7,23 @@ export const runtime = 'nodejs'
 
 const STALE_PROCESSING_MS = 5 * 60 * 1000
 
+async function reconcileTransfer(transfer: Stripe.Transfer) {
+  const jobId = transfer.metadata.jobId
+  if (!jobId) return
+  await db.$transaction(async tx => {
+    const job = await tx.job.findUnique({ where: { id: jobId }, select: { id:true,status:true,paymentStatus:true,stripeTransferId:true,haulerId:true } })
+    if (!job || (job.stripeTransferId && job.stripeTransferId !== transfer.id)) return
+    if (!job.stripeTransferId) await tx.job.updateMany({ where:{id:jobId,stripeTransferId:null}, data:{stripeTransferId:transfer.id} })
+    if (job.status === 'PAYOUT_PROCESSING' && job.paymentStatus === 'CAPTURED') {
+      const done = await tx.job.updateMany({ where:{id:jobId,status:'PAYOUT_PROCESSING',paymentStatus:'CAPTURED',stripeTransferId:transfer.id}, data:{status:'COMPLETED',paymentStatus:'TRANSFERRED',completedAt:new Date()} })
+      if (done.count===1 && job.haulerId) {
+        await tx.haulerProfile.updateMany({where:{id:job.haulerId},data:{jobCount:{increment:1}}})
+        await tx.auditLog.create({data:{actorUserId:null,action:'PAYOUT_RECONCILED',entityType:'JOB',entityId:jobId,jobId,metadata:JSON.stringify({transferId:transfer.id,source:'stripe.webhook'})}})
+      }
+    }
+  })
+}
+
 async function claimEvent(event: Stripe.Event): Promise<'CLAIMED' | 'DUPLICATE' | 'RETRY'> {
   const existing = await db.stripeEvent.findUnique({ where: { id: event.id } })
 
@@ -77,7 +94,7 @@ export async function POST(req: NextRequest) {
         const pi = event.data.object as Stripe.PaymentIntent
         if (pi.metadata.jobId) {
           await db.job.updateMany({
-            where: { id: pi.metadata.jobId, stripePaymentIntentId: pi.id, paymentStatus: 'AUTHORIZED' },
+            where: { id: pi.metadata.jobId, stripePaymentIntentId: pi.id, status: { notIn: ['COMPLETED','CANCELLED'] }, paymentStatus: { notIn: ['TRANSFERRED','REFUNDED','PARTIALLY_REFUNDED'] } },
             data: { authorizedAt: new Date(pi.created * 1000), paymentStatus: 'AUTHORIZED' },
           })
         }
@@ -112,6 +129,11 @@ export async function POST(req: NextRequest) {
       }
 
       case 'transfer.created': {
+        await reconcileTransfer(event.data.object as Stripe.Transfer)
+        break
+      }
+
+      case 'transfer.paid': {
         const transfer = event.data.object as Stripe.Transfer
         const jobId = transfer.metadata.jobId
         if (jobId) {
@@ -143,7 +165,7 @@ export async function POST(req: NextRequest) {
         if (piId) {
           await db.job.updateMany({
             where: { stripePaymentIntentId: piId },
-            data: { paymentStatus: 'REFUNDED' },
+            data: { paymentStatus: charge.amount_refunded >= charge.amount ? 'REFUNDED' : 'PARTIALLY_REFUNDED' },
           })
         }
         break
