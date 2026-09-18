@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import Stripe from 'stripe'
 import { stripe } from '@/lib/stripe'
 import { db } from '@/lib/db'
 import { getOrCreateDbUser } from '@/lib/auth'
@@ -33,32 +34,50 @@ export async function POST(req: NextRequest) {
   })
   if (locked.count !== 1) return NextResponse.json({ error: 'Payout is already being processed or payment is not in a releasable state' }, { status: 409 })
 
+  let transfer: Stripe.Transfer | null = null
+
   try {
-    // AUTHORIZED -> CAPTURED. If a webhook already confirmed capture, do not
-    // call capture again.
-    let paymentStatus = job.paymentStatus
-    if (paymentStatus === 'AUTHORIZED') {
-      const captured = await stripe.paymentIntents.capture(
-        job.stripePaymentIntentId,
+    // Re-read after locking so a webhook that won a race with this request is
+    // respected. Never trust the pre-lock snapshot for an external payment state.
+    let current = await db.job.findUnique({ where: { id: job.id } })
+    if (!current || current.status !== 'PAYOUT_PROCESSING') throw new Error('JOB_STATE_CHANGED')
+
+    if (!current.stripePaymentIntentId) throw new Error('PAYMENT_INTENT_MISSING')
+
+    // Reconcile the PaymentIntent before deciding whether capture is needed.
+    // This makes the operation recoverable if Stripe succeeded but our DB write
+    // was interrupted.
+    let paymentIntent = await stripe.paymentIntents.retrieve(current.stripePaymentIntentId)
+    if (paymentIntent.status === 'succeeded') {
+      await db.job.updateMany({
+        where: { id: job.id, status: 'PAYOUT_PROCESSING', paymentStatus: { in: ['AUTHORIZED', 'CAPTURED'] } },
+        data: { paymentStatus: 'CAPTURED' },
+      })
+    } else if (paymentIntent.status === 'requires_capture') {
+      paymentIntent = await stripe.paymentIntents.capture(
+        current.stripePaymentIntentId,
         undefined,
         { idempotencyKey: 'job-capture:' + job.id },
       )
-      if (captured.status !== 'succeeded') throw new Error('Payment capture did not succeed')
-
+      if (paymentIntent.status !== 'succeeded') throw new Error('Payment capture did not succeed')
       await db.job.updateMany({
         where: { id: job.id, status: 'PAYOUT_PROCESSING' },
         data: { paymentStatus: 'CAPTURED' },
       })
-      paymentStatus = 'CAPTURED'
+    } else {
+      throw new Error('PaymentIntent is not capturable: ' + paymentIntent.status)
     }
 
-    if (paymentStatus !== 'CAPTURED') throw new Error('Payment is not captured')
+    current = await db.job.findUnique({ where: { id: job.id } })
+    if (!current || current.status !== 'PAYOUT_PROCESSING' || current.paymentStatus !== 'CAPTURED') {
+      throw new Error('PAYMENT_DB_STATE_NOT_CAPTURED')
+    }
 
-    // CAPTURED -> TRANSFERRED. The idempotency key makes a retry safe if the
-    // transfer succeeded but the database update was interrupted.
-    const transfer = await stripe.transfers.create(
+    // The idempotency key is stable for the job. If Stripe created the transfer
+    // and the DB write failed, the same request on retry returns the same transfer.
+    transfer = await stripe.transfers.create(
       {
-        amount: job.haulerPayoutCents,
+        amount: current.haulerPayoutCents,
         currency: 'usd',
         destination: job.hauler.stripeAccountId,
         transfer_group: job.jobNumber,
@@ -67,27 +86,31 @@ export async function POST(req: NextRequest) {
       { idempotencyKey: 'job-transfer:' + job.id },
     )
 
-    const completed = await db.$transaction(async (tx) => {
-      const current = await tx.job.findUnique({
-        where: { id: job.id },
-        select: { status: true, paymentStatus: true, stripeTransferId: true },
-      })
-      if (!current || current.status !== 'PAYOUT_PROCESSING' || current.paymentStatus !== 'CAPTURED') {
-        throw new Error('JOB_STATE_CHANGED')
-      }
-
+    const finalized = await db.$transaction(async (tx) => {
       const result = await tx.job.updateMany({
-        where: { id: job.id, status: 'PAYOUT_PROCESSING', paymentStatus: 'CAPTURED' },
+        where: {
+          id: job.id,
+          status: 'PAYOUT_PROCESSING',
+          paymentStatus: 'CAPTURED',
+          OR: [{ stripeTransferId: null }, { stripeTransferId: transfer!.id }],
+        },
         data: {
           status: 'COMPLETED',
           paymentStatus: 'TRANSFERRED',
-          stripeTransferId: transfer.id,
+          stripeTransferId: transfer!.id,
           completedAt: new Date(),
         },
       })
-      if (result.count !== 1) throw new Error('Job state changed during payout')
 
-      await tx.haulerProfile.update({
+      if (result.count !== 1) {
+        const already = await tx.job.findUnique({ where: { id: job.id }, select: { status: true, paymentStatus: true, stripeTransferId: true } })
+        if (already?.status === 'COMPLETED' && already.paymentStatus === 'TRANSFERRED' && already.stripeTransferId === transfer!.id) {
+          return { count: 0, alreadyFinalized: true }
+        }
+        throw new Error('JOB_STATE_CHANGED')
+      }
+
+      await tx.haulerProfile.updateMany({
         where: { id: job.haulerId! },
         data: { jobCount: { increment: 1 } },
       })
@@ -100,17 +123,15 @@ export async function POST(req: NextRequest) {
           entityId: job.id,
           jobId: job.id,
           metadata: JSON.stringify({
-            paymentIntentId: job.stripePaymentIntentId,
-            transferId: transfer.id,
-            payoutCents: job.haulerPayoutCents,
+            paymentIntentId: current!.stripePaymentIntentId,
+            transferId: transfer!.id,
+            payoutCents: current!.haulerPayoutCents,
             paymentState: 'TRANSFERRED',
           }),
         },
       })
-      return result
+      return { count: result.count, alreadyFinalized: false }
     })
-
-    if (!completed.count) throw new Error('Payout state update failed')
 
     await notifyUser({
       userId: job.hauler.userId,
@@ -129,20 +150,42 @@ export async function POST(req: NextRequest) {
       url: '/customer/jobs/' + job.id + '/receipt',
     })
 
-    return NextResponse.json({ success: true, transferId: transfer.id, paymentStatus: 'TRANSFERRED' })
+    return NextResponse.json({ success: true, transferId: transfer.id, paymentStatus: 'TRANSFERRED', alreadyFinalized: finalized.alreadyFinalized })
   } catch (err) {
     console.error('Payout release failed', err)
 
-    // If capture succeeded, deliberately keep CAPTURED so a retry resumes at
-    // the transfer step instead of trying to capture the PaymentIntent again.
-    const recoveryStatus = job.paymentStatus === 'AUTHORIZED' ? 'AUTHORIZED' : 'CAPTURED'
-    await db.job.updateMany({
-      where: { id: job.id, status: 'PAYOUT_PROCESSING' },
-      data: { status: job.status, paymentStatus: recoveryStatus },
-    })
+    // Reconcile Stripe before changing the database back. If Stripe captured the
+    // payment, keep CAPTURED. If a transfer was created, persist its ID and leave
+    // the job recoverable for the webhook/retry path instead of rolling it back.
+    try {
+      const pi = job.stripePaymentIntentId ? await stripe.paymentIntents.retrieve(job.stripePaymentIntentId) : null
+      const stripeCaptured = pi?.status === 'succeeded'
+      const transferId = transfer?.id ?? null
+
+      if (transferId) {
+        await db.job.updateMany({
+          where: { id: job.id, status: 'PAYOUT_PROCESSING' },
+          data: { paymentStatus: stripeCaptured ? 'CAPTURED' : 'CAPTURED', stripeTransferId: transferId },
+        })
+      } else if (stripeCaptured) {
+        await db.job.updateMany({
+          where: { id: job.id, status: 'PAYOUT_PROCESSING' },
+          data: { paymentStatus: 'CAPTURED' },
+        })
+      } else {
+        await db.job.updateMany({
+          where: { id: job.id, status: 'PAYOUT_PROCESSING' },
+          data: { status: job.status, paymentStatus: 'AUTHORIZED' },
+        })
+      }
+    } catch (reconcileErr) {
+      console.error('Stripe/DB reconciliation failed after payout error', reconcileErr)
+      // Leave PAYOUT_PROCESSING intact. A webhook or a later retry can safely
+      // reconcile the external Stripe state without risking a duplicate charge.
+    }
 
     return NextResponse.json({
-      error: 'Payout could not be completed. The payment state was preserved so the operation can be safely retried.',
+      error: 'Payout could not be completed. Stripe and database state was preserved for safe retry/reconciliation.',
     }, { status: 502 })
   }
 }
