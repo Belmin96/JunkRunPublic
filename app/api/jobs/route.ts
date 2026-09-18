@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { getOrCreateDbUser } from '@/lib/auth'
 import { notifyHaulersOfNewJob } from '@/lib/notify'
 import { JOB_TYPES } from '@/lib/constants'
+import { hasAcceptedLegal, CUSTOMER_LEGAL } from '@/lib/legal'
 import { z } from 'zod'
 
 const QUESTIONNAIRE_OPTIONS = {
@@ -108,7 +109,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getOrCreateDbUser(); if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }); if (user.role !== 'CUSTOMER') return NextResponse.json({ error: 'Only customers can post jobs' }, { status: 403 }); if (!user.paymentVerified) return NextResponse.json({ error: 'Add a verified payment method before posting a job', code: 'PAYMENT_UNVERIFIED' }, { status: 402 })
+  const user = await getOrCreateDbUser(); if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 }); if (user.role !== 'CUSTOMER') return NextResponse.json({ error: 'Only customers can post jobs' }, { status: 403 }); const legalAccepted = await hasAcceptedLegal(user.id, CUSTOMER_LEGAL); if (!legalAccepted) return NextResponse.json({ error: 'Accept the required JunkRun legal documents before posting a job', code: 'LEGAL_ACCEPTANCE_REQUIRED' }, { status: 428 }); if (!user.paymentVerified) return NextResponse.json({ error: 'Add a verified payment method before posting a job', code: 'PAYMENT_UNVERIFIED' }, { status: 402 })
   const parsed = CreateJobSchema.safeParse(await req.json()); if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 422 }); const data = parsed.data
   if (data.arrivalType === 'SET_TIME' && !data.time) return NextResponse.json({ error: 'A pickup time is required' }, { status: 422 })
   if (data.arrivalType === 'ANYTIME' && data.time) return NextResponse.json({ error: 'Anytime pickups cannot include a pickup time' }, { status: 422 })
